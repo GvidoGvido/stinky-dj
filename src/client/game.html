@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" type="text/css" href="game.css" />
+    <meta
+      name="viewport"
+      content="initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, width=device-width, height=device-height, user-scalable=0"
+    />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>Hook of the Day</title>
+  </head>
+  <body>
+    <div id="studio-root"></div>
+
+    <div class="ui">
+      <div class="ui-top">
+        <div class="pill" id="mode-pill">HOOK OF THE DAY</div>
+        <div class="ui-top-center">
+          <button type="button" class="tour-toggle" id="tour-toggle">Tour ▾</button>
+          <button type="button" class="help-toggle" id="help-toggle" aria-expanded="false">Help ▾</button>
+          <button type="button" class="panel-toggle console-toggle" id="console-toggle" aria-expanded="false">Console</button>
+          <button type="button" class="panel-toggle drums-toggle" id="drums-toggle" aria-expanded="false">Drums</button>
+          <button type="button" class="panel-toggle keys-toggle" id="keys-toggle" aria-expanded="false">🎹 Keys</button>
+        </div>
+        <div class="pill" id="round-pill">Round</div>
+      </div>
+
+      <div id="tour-overlay" class="tour-overlay hidden"></div>
+
+      <div class="help-panel hidden" id="help-panel">
+        <div class="help-section">
+          <h3>Synth (center)</h3>
+          <p>Melody: <strong>A–K</strong> bottom row, <strong>O L P ; '</strong> upper row, <strong>Z X C V B N</strong> for high notes (G5–C6).</p>
+          <p>Bass: <strong>1–0</strong>, then <strong>- = [</strong> for the lowest notes on the right.</p>
+          <p>On mobile, the <strong>3D studio</strong> stays visible up top — use <strong>Console</strong>, <strong>Drums</strong>, and <strong>🎹 Keys</strong> panels below (tap <strong>✕</strong> to close any).</p>
+          <p><strong>SYN</strong> cycles lead sounds — piano, guitar, sax, strings, brass, and more.</p>
+          <p>Console: tap <strong>▲</strong> to raise / turn on, <strong>▼</strong> to lower / turn off.</p>
+          <p><strong>SUST</strong> (▲ on / ▼ off): hold keys to ring notes while pressed; off = short plucks.</p>
+          <p class="gear-status" id="gear-synth">Lead: — · Bass: — · Kit: — · BPM: —</p>
+        </div>
+        <div class="help-section">
+          <h3>Drums (left)</h3>
+          <p>Tap pads to program beats. <strong>KIT</strong> = classic/808/909/lo-fi/electro. <strong>PAT</strong> = presets incl. a snare-roll FILL.</p>
+        </div>
+        <div class="help-section">
+          <h3>Tape + mic (right)</h3>
+          <p><strong>Record multitrack</strong> (bottom strip): expand to build 1–4 layers. Pick a track, tap <strong>● Record</strong> on that layer only, then <strong>Submit ✓</strong> with however many you’ve got. Or hit the <strong>3D tape deck REC</strong> to capture everything in one go.</p>
+          <p>Hit <strong>Tour</strong> for a guided walkthrough with arrows.</p>
+        </div>
+      </div>
+
+      <div id="reveal-banner" class="reveal hidden"></div>
+
+      <div class="dialogue" id="dialogue">
+        DJ: Drop one hook today — tap REC when you're ready.
+      </div>
+
+      <div class="rec-status hidden" id="rec-status">Ready</div>
+
+      <div id="mobile-compose" class="mobile-compose">
+        <div id="mobile-compose-scroll" class="mobile-compose-scroll">
+        <div id="multitrack-panel" class="multitrack-panel hidden" aria-label="Multitrack layers">
+          <div class="mt-head">
+            <button type="button" class="mt-collapse-toggle" id="mt-collapse-toggle" aria-expanded="false" title="Show layer controls">
+              <span class="mt-title">Record multitrack</span>
+              <span class="mt-sub" id="mt-loop-label">Tap to expand · up to 4 layers</span>
+            </button>
+            <div class="mt-head-actions">
+              <button type="button" class="mt-play-loop" id="mt-play-loop" disabled>▶ Play</button>
+              <button type="button" class="mt-submit-compact hidden" id="mt-submit" disabled title="Submit recorded layers">Submit ✓</button>
+            </div>
+          </div>
+          <div class="mt-collapsed-summary" id="mt-collapsed-summary" aria-hidden="true"></div>
+          <div class="mt-expanded-body">
+          <div class="mt-layers-wrap">
+            <div class="mt-slots" id="mt-slots-grid" role="list"></div>
+          </div>
+          <div class="mt-next">
+            <div class="mt-next-label">1. Choose layer</div>
+            <div class="mt-arm-row" id="mt-arm-row" role="group" aria-label="Choose layer type">
+              <button type="button" class="mt-arm" data-arm="drums" aria-pressed="false"><span>Drums</span></button>
+              <button type="button" class="mt-arm" data-arm="keys" aria-pressed="false"><span>Keys</span></button>
+              <button type="button" class="mt-arm" data-arm="bass" aria-pressed="false"><span>Bass</span></button>
+              <button type="button" class="mt-arm" data-arm="vox" aria-pressed="false"><span>Voice</span></button>
+            </div>
+          </div>
+          <div class="mt-actions">
+            <button type="button" class="mt-btn clear" id="mt-clear">Clear all</button>
+          </div>
+          </div>
+        </div>
+        <div id="mobile-compose-stack" class="mobile-compose-stack">
+          <div id="touch-console" class="touch-panel touch-console hidden"></div>
+          <div id="touch-drums" class="touch-panel touch-drums hidden"></div>
+          <div id="touch-keys" class="touch-keys hidden"></div>
+        </div>
+        </div>
+        <div id="compose-toolbar" class="compose-toolbar hidden">
+          <button type="button" id="compose-rec" class="compose-rec">● REC</button>
+          <button type="button" id="compose-mic" class="compose-mic" aria-pressed="true">🎤 MIC ON</button>
+          <span id="compose-rec-timer" class="compose-rec-timer hidden">0.0s</span>
+        </div>
+      </div>
+
+      <div class="review-overlay hidden" id="review-overlay" aria-hidden="true">
+        <div class="review-bar" id="review-bar" role="dialog" aria-modal="true" aria-labelledby="review-heading">
+          <div class="review-heading" id="review-heading">Name your tune</div>
+          <p class="review-sub">Tap ▶ to listen · Submit when you’re happy</p>
+          <input
+            type="text"
+            class="review-title"
+            id="review-title"
+            maxlength="40"
+            placeholder="Track name…"
+            aria-label="Track name"
+          />
+          <div class="review-actions">
+            <button type="button" class="review-btn" id="review-play">▶ Play</button>
+            <button type="button" class="review-btn danger" id="review-delete">✕ Delete</button>
+            <button type="button" class="review-btn primary" id="review-submit">Submit ✓</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="applause" class="applause hidden" aria-hidden="true">👏👏👏</div>
+
+      <button type="button" class="hooks-toggle" id="hooks-toggle">Today’s hooks ▲</button>
+
+      <div class="hooks-drawer" id="hooks-drawer">
+        <div id="hooks-list" class="hooks"></div>
+      </div>
+    </div>
+
+    <script type="module" src="game.ts" defer></script>
+  </body>
+</html>

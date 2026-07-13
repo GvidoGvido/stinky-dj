@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <link rel="stylesheet" type="text/css" href="splash.css" />
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, width=device-width, height=device-height, user-scalable=0"
+    />
+    <title>Stinky DJ</title>
+  </head>
+  <body class="app">
+    <div class="orbs"></div>
+    <main class="content">
+      <div class="wheel-mark">⏺</div>
+      <h1 class="title">Hook&nbsp;of&nbsp;the&nbsp;Day</h1>
+      <p class="tagline">
+        Program the drum machine, play keys on top, hit record, and drop a 30-second hook.
+        Listen to today’s hooks and vote for your favorite.
+      </p>
+      <div class="daily" id="daily">
+        <span class="daily-track" id="daily-track">Today’s Round</span>
+        <span class="daily-sub" id="daily-sub">Resets at 00:00 (GMT+2)</span>
+      </div>
+      <button class="start-button" id="start-button">Open the Studio</button>
+      <div class="streak" id="streak"></div>
+    </main>
+    <script type="module" src="splash.ts" defer></script>
+  </body>
+</html>
