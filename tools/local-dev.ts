@@ -19,7 +19,7 @@ process.on('SIGINT', () => {
   process.exit(0);
 });
 
-console.log(`\n  Hook of the Day — local dev`);
+console.log(`\n  Hook of the Day (local dev)`);
 console.log(`  Game:   http://localhost:${VITE_PORT}/game.html`);
 console.log(`  Splash: http://localhost:${VITE_PORT}/splash.html`);
 console.log(`  Ctrl+C to stop\n`);

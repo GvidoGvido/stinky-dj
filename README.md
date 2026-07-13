@@ -1,16 +1,16 @@
-# Stinky DJ
+# Hook of the Day
 
-**Hook of the Day** — a Reddit Devvit game where players record a short musical hook (drums, keys, bass, and optional vocals), submit it to a daily leaderboard, and vote on other submissions.
+A Reddit Devvit game where players record a short musical hook (drums, keys, bass, and optional vocals), submit it to a daily leaderboard, and vote on other submissions.
 
 Built with [Devvit Web](https://developers.reddit.com/), Three.js, and the Web Audio API.
 
 ## Features
 
-- **3D studio** — PS1-style desk with drum machine, synth, and tape deck
-- **Touch-friendly compose UI** — mobile console, drum grid, and two-row keyboard (melody + bass)
-- **Multitrack overdub** — record drums, keys, bass, and vox as separate layers, then submit the mix
-- **Daily hooks** — one submission per user per round; vote on today’s takes
-- **Local dev** — full game loop with a mock API, no Reddit login required
+- **3D studio:** PS1-style desk with drum machine, synth, and tape deck
+- **Touch-friendly compose UI:** mobile console, drum grid, and two-row keyboard (melody + bass)
+- **Multitrack overdub:** record drums, keys, bass, and vox as separate layers, then submit the mix
+- **Daily hooks:** one submission per user per round; vote on today's takes
+- **Local dev:** full game loop with a mock API, no Reddit login required
 
 ## Requirements
 

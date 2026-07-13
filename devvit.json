@@ -1,6 +1,6 @@
 {
   "$schema": "https://developers.reddit.com/schema/config-file.v1.json",
-  "name": "stinky-dj",
+  "name": "hook-of-the-day",
   "post": {
     "dir": "dist/client",
     "entrypoints": {
@@ -20,7 +20,7 @@
   "menu": {
     "items": [
       {
-        "label": "Create a new Stinky DJ post",
+        "label": "Create a new Hook of the Day post",
         "description": "Name today’s PS1 mystery album sleeve",
         "location": "subreddit",
         "forUserType": "moderator",
@@ -34,5 +34,8 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite build --watch"
+  },
+  "dev": {
+    "subreddit": "hook_of_the_day_dev"
   }
 }

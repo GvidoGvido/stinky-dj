@@ -32,7 +32,7 @@ api.get('/init', async (c) => {
   try {
     const now = buildRoundState();
     const prevRound = previousRoundId(now.roundId);
-    const username = (await reddit.getCurrentUsername()) ?? 'stinky-driver';
+    const username = (await reddit.getCurrentUsername()) ?? 'hook-player';
 
     const [player, submissions, prevReveal] = await Promise.all([
       getPlayerState(now.roundId, username),
@@ -65,7 +65,7 @@ api.post('/submit-hook', async (c) => {
     const body = await c.req.json<SubmitHookRequest>();
     const now = buildRoundState();
     const prevRound = previousRoundId(now.roundId);
-    const username = (await reddit.getCurrentUsername()) ?? 'stinky-driver';
+    const username = (await reddit.getCurrentUsername()) ?? 'hook-player';
 
     const action = await submitHook(now.roundId, username, body.hook);
     const prevReveal = await computePrevReveal(prevRound);
@@ -92,7 +92,7 @@ api.post('/vote', async (c) => {
     const body = await c.req.json<VoteRequest>();
     const now = buildRoundState();
     const prevRound = previousRoundId(now.roundId);
-    const username = (await reddit.getCurrentUsername()) ?? 'stinky-driver';
+    const username = (await reddit.getCurrentUsername()) ?? 'hook-player';
 
     const action = await vote(now.roundId, username, body.hookId);
     const prevReveal = await computePrevReveal(prevRound);
