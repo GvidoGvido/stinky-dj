@@ -191,6 +191,11 @@ export function mountMultitrackPanel(opts: MultitrackPanelOptions): {
   mountLayerArmIcons(armRow);
 
   collapseToggle.addEventListener('click', () => opts.onToggleExpanded());
+  const closeBtn = root.querySelector<HTMLButtonElement>('#mt-close-btn')!;
+  closeBtn.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    opts.onToggleExpanded();
+  });
   playLoopBtn.addEventListener('click', () => opts.onPlayLoop());
   submitBtn.addEventListener('click', () => opts.onSubmit());
   root.querySelector<HTMLButtonElement>('#mt-clear')!.addEventListener('click', () => opts.onClear());
@@ -249,6 +254,8 @@ export function mountMultitrackPanel(opts: MultitrackPanelOptions): {
     root.classList.toggle('expanded', expanded);
     root.classList.toggle('collapsed', !expanded);
     collapseToggle.disabled = recording;
+    closeBtn.disabled = recording || !expanded;
+    closeBtn.setAttribute('aria-hidden', expanded ? 'false' : 'true');
     collapseToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
     collapseToggle.title = recording
       ? 'Recording in progress'
@@ -268,6 +275,10 @@ export function mountMultitrackPanel(opts: MultitrackPanelOptions): {
     submitBtn.classList.toggle('hidden', !canSubmit);
     submitBtn.disabled = !canSubmit || recording;
 
+    const backingCount = session
+      ? session.layers.filter((l) => l.kind !== 'mix' && !(recording && l.kind === arm)).length
+      : 0;
+
     if (loopPlaying && !loopPaused) {
       playLoopBtn.textContent = '⏸ Pause';
       playLoopBtn.dataset.playing = 'true';
@@ -281,8 +292,8 @@ export function mountMultitrackPanel(opts: MultitrackPanelOptions): {
     } else {
       playLoopBtn.textContent = '▶ Play';
       playLoopBtn.dataset.playing = 'false';
-      playLoopBtn.disabled = !session || session.layers.length === 0;
-      playLoopBtn.setAttribute('aria-label', 'Play all recorded layers');
+      playLoopBtn.disabled = backingCount === 0;
+      playLoopBtn.setAttribute('aria-label', recording ? 'Play backing tracks while recording' : 'Play all recorded layers');
     }
 
     const filledCount = session?.layers.length ?? 0;
@@ -344,27 +355,7 @@ export function mountMultitrackPanel(opts: MultitrackPanelOptions): {
       const actions = document.createElement('div');
       actions.className = 'mt-slot-actions';
 
-      if (isActive) {
-        const rec = document.createElement('button');
-        rec.type = 'button';
-        rec.className = `mt-slot-btn record-layer${isRecordingNow ? ' recording' : ''}`;
-        if (isRecordingNow) {
-          rec.textContent = `■ Stop (${recordSec.toFixed(1)}s)`;
-          rec.title = 'Stop and save this layer';
-        } else {
-          rec.textContent = reRecordArm === slotArm ? '● Re-record' : '● Record';
-          rec.title = `Record ${meta.label}`;
-          rec.disabled = atMaxLayers && !layer && !reRecordArm;
-        }
-        rec.setAttribute('aria-label', isRecordingNow ? `Stop ${meta.label} recording` : `Record ${meta.label}`);
-        rec.addEventListener('click', (ev) => {
-          ev.stopPropagation();
-          opts.onRecordLayer(slotArm);
-        });
-        actions.appendChild(rec);
-      }
-
-      if (layer) {
+      if (layer && !isRecordingNow) {
         const play = document.createElement('button');
         play.type = 'button';
         play.className = `mt-slot-btn play${isPlaying ? ' playing' : ''}${isPaused ? ' paused' : ''}`;
@@ -374,7 +365,7 @@ export function mountMultitrackPanel(opts: MultitrackPanelOptions): {
           'aria-label',
           isPlaying ? `Pause ${meta.label}` : isPaused ? `Resume ${meta.label}` : `Play ${meta.label}`,
         );
-        play.disabled = recording;
+        play.disabled = false;
         play.addEventListener('click', (ev) => {
           ev.stopPropagation();
           opts.onPreviewLayer(slotArm);
@@ -424,7 +415,34 @@ export function mountMultitrackPanel(opts: MultitrackPanelOptions): {
 
       card.appendChild(head);
       card.appendChild(body);
-      card.appendChild(actions);
+
+      if (actions.childNodes.length) {
+        card.appendChild(actions);
+      }
+
+      if (isActive) {
+        const recRow = document.createElement('div');
+        recRow.className = 'mt-slot-actions mt-slot-actions-record';
+        const rec = document.createElement('button');
+        rec.type = 'button';
+        rec.className = `mt-slot-btn record-layer${isRecordingNow ? ' recording' : ''}`;
+        if (isRecordingNow) {
+          rec.textContent = `■ Stop (${recordSec.toFixed(1)}s)`;
+          rec.title = 'Stop and save this layer';
+        } else {
+          rec.textContent = reRecordArm === slotArm ? '● Re-record' : '● Record';
+          rec.title = `Record ${meta.label}`;
+          rec.disabled = atMaxLayers && !layer && !reRecordArm;
+        }
+        rec.setAttribute('aria-label', isRecordingNow ? `Stop ${meta.label} recording` : `Record ${meta.label}`);
+        rec.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          opts.onRecordLayer(slotArm);
+        });
+        recRow.appendChild(rec);
+        card.appendChild(recRow);
+      }
+
       card.addEventListener('click', (ev) => {
         if (recording) return;
         if ((ev.target as HTMLElement).closest('.mt-slot-btn')) return;

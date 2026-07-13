@@ -144,7 +144,7 @@ export type ErrorResponse = {
 };
 
 /** Maximum hook recording length in seconds. */
-export const MAX_RECORD_SEC = 30;
+export const MAX_RECORD_SEC = 60;
 
-/** Max base64 chars for stored voice audio (~900KB binary — full 30s @192kbps Opus). */
-export const VOICE_MAX_B64 = 1_200_000;
+/** Max base64 chars for stored voice audio (~1.8MB binary — full 60s @192kbps Opus). */
+export const VOICE_MAX_B64 = 2_400_000;

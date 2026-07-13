@@ -96,8 +96,14 @@ export function mountTour(
     arrow.classList.remove('hidden');
     arrow.style.left = `${pt.x}px`;
     arrow.style.top = `${pt.y - 28}px`;
-    card.style.left = `${Math.min(window.innerWidth - 280, Math.max(12, pt.x - 130))}px`;
-    card.style.top = `${Math.min(window.innerHeight - 200, pt.y + 16)}px`;
+    const cardW = 260;
+    const cardH = 200;
+    const hooksReserve = 80;
+    let cardTop = Math.min(window.innerHeight - cardH - 12, pt.y + 16);
+    const maxTop = window.innerHeight - hooksReserve - cardH;
+    if (cardTop > maxTop) cardTop = Math.max(52, maxTop);
+    card.style.left = `${Math.min(window.innerWidth - cardW - 12, Math.max(12, pt.x - cardW / 2))}px`;
+    card.style.top = `${cardTop}px`;
   }
 
   return { show, hide, tick };

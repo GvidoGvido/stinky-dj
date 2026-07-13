@@ -414,7 +414,11 @@ async function init(): Promise<void> {
   }
 
   function toggleLayerPreview(arm: LayerArm): void {
-    if (!mtSession || hookRecorder.active) return;
+    if (!mtSession) return;
+    if (hookRecorder.active && arm === layerArm) {
+      toast('Finish this take before previewing it');
+      return;
+    }
     const layer = findLayerForArm(mtSession, arm);
     if (!layer) {
       toast(`No ${layerArmLabel(arm).toLowerCase()} layer yet`);
@@ -430,15 +434,19 @@ async function init(): Promise<void> {
       renderMultitrackPanel();
       return;
     }
-    stopOverdubLoopPlayback();
-    finishHookPlayback();
+    if (!hookRecorder.active) {
+      stopOverdubLoopPlayback();
+      finishHookPlayback();
+    }
     void playHook(buildHookFromLayer(mtSession, layer), {
       restorePattern: false,
       reviewUi: false,
       isOverdubMonitor: false,
       previewArm: arm,
     });
-    dialogue.textContent = `DJ: Playing ${layerArmLabel(arm)} — tap ⏸ to pause.`;
+    dialogue.textContent = hookRecorder.active
+      ? `DJ: Backing — ${layerArmLabel(arm)}. Keep recording your ${layerArmLabel(layerArm).toLowerCase()} take.`
+      : `DJ: Playing ${layerArmLabel(arm)} — tap ⏸ to pause.`;
   }
 
   function layerFlowHint(arm: LayerArm, hasTake: boolean): string {
@@ -447,6 +455,13 @@ async function init(): Promise<void> {
     }
     return `DJ: ${layerArmLabel(arm)} selected — tap ● Record on that track when ready.`;
   }
+  function buildHookFromSessionExcluding(session: MultitrackSessionLocal, exclude: LayerArm): HookData {
+    return buildHookFromSession({
+      ...session,
+      layers: session.layers.filter((l) => l.kind !== exclude),
+    });
+  }
+
   function buildHookFromSession(session: MultitrackSessionLocal): HookData {
     const flat = flattenSession(session);
     let drumPattern = drumPatternForSession(session);
@@ -568,6 +583,11 @@ async function init(): Promise<void> {
     mtPanelExpanded = !mtPanelExpanded;
     if (mtPanelExpanded && !mtSession) beginMultitrackSession();
     renderMultitrackPanel();
+    if (mtPanelExpanded) {
+      requestAnimationFrame(() => {
+        el<HTMLDivElement>('multitrack-panel').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      });
+    }
   }
 
   function expandMultitrackPanel(): void {
@@ -641,10 +661,21 @@ async function init(): Promise<void> {
   }
 
   function startOverdubLoop(): void {
-    if (!mtSession || hookRecorder.active || pendingHook || mtSession.layers.length === 0) return;
+    if (!mtSession || pendingHook) return;
+    const excludeArm = hookRecorder.active ? layerArm : undefined;
+    const backingLayers = mtSession.layers.filter(
+      (l) => l.kind !== 'mix' && (!excludeArm || l.kind !== excludeArm),
+    );
+    if (backingLayers.length === 0) {
+      if (hookRecorder.active) toast('Record another layer first to use as backing');
+      return;
+    }
     overdubLoopActive = true;
     overdubLoopPlaying = true;
-    void playHook(buildHookFromSession(mtSession), {
+    const hook = excludeArm
+      ? buildHookFromSessionExcluding(mtSession, excludeArm)
+      : buildHookFromSession(mtSession);
+    void playHook(hook, {
       restorePattern: false,
       reviewUi: false,
       isOverdubMonitor: true,
@@ -786,6 +817,30 @@ async function init(): Promise<void> {
     reviewPlayBtn.setAttribute('aria-label', mode === 'pause' ? 'Pause playback' : 'Play recording');
   }
 
+  function stopMonitorPlaybackOnly(): void {
+    if (!hookPlayback) return;
+    const { endTimerId, usingTransport, isOverdubMonitor, previewArm } = hookPlayback;
+    if (!isOverdubMonitor && !previewArm) {
+      finishHookPlayback();
+      return;
+    }
+    if (endTimerId) window.clearTimeout(endTimerId);
+    clearPreviewTimers();
+    audio.pauseVoicePlayback();
+    audio.noteOffAll();
+    hookPlayback = null;
+    clearHookPreview();
+    audio.endHookPlayback();
+    if (usingTransport) stopTransport();
+    syncLiveInstrumentGains();
+    if (hookRecorder.active) {
+      audio.beginRecordingMonitor(shouldRecordVoice());
+      syncRecordingTransport();
+    }
+    syncInstrumentsBlocked();
+    renderMultitrackPanel();
+  }
+
   function finishHookPlayback(opts?: { restartLiveTransport?: boolean }): void {
     if (!hookPlayback) return;
     const { restorePattern: shouldRestore, patternSnap, usingTransport, endTimerId, isOverdubMonitor, previewArm } =
@@ -809,6 +864,10 @@ async function init(): Promise<void> {
     }
     updateGearStatus();
     touchDrums?.refresh();
+    if (hookRecorder.active) {
+      audio.beginRecordingMonitor(shouldRecordVoice());
+      syncRecordingTransport();
+    }
     if (shouldRestartOverdub) {
       overdubLoopPlaying = true;
       window.setTimeout(() => startOverdubLoop(), 180);
@@ -1149,6 +1208,7 @@ async function init(): Promise<void> {
 
   function instrumentsBlocked(): boolean {
     if (submitted) return true;
+    if (hookRecorder.active) return false;
     if (reviewBarOpen()) return true;
     if (hookPlayback) return true;
     const active = document.activeElement;
@@ -1405,7 +1465,9 @@ async function init(): Promise<void> {
       beginMultitrackSession();
       expandMultitrackPanel();
       renderMultitrackPanel();
-      openInstrumentForArm(layerArm);
+      if (layerArm === 'drums' || layerArm === 'vox') {
+        openInstrumentForArm(layerArm);
+      }
     } else {
       pendingHook = null;
       showReviewBar(false);
@@ -1416,9 +1478,17 @@ async function init(): Promise<void> {
     hookRecorder.start();
     syncRecordingTransport();
 
-    if (shouldRecordVoice()) void voiceRec.start();
-    recordElapsedSec = 0;
     const layerMode = overdubOn && !fullTakeRecording;
+    if (shouldRecordVoice()) {
+      const micOk = await voiceRec.start();
+      if (!micOk) {
+        toast(VoiceRecorder.micUnavailableMessage());
+        if (layerMode && layerArm === 'vox') {
+          dialogue.textContent = 'DJ: Mic unavailable here — try keys/drums, or test locally with npm run local.';
+        }
+      }
+    }
+    recordElapsedSec = 0;
     const layerHint = layerMode ? layerArmLabel(layerArm).toLowerCase() : 'keys, bass, drums, and voice';
     const capSec = layerMode ? sessionRecordCapSec() : MAX_RECORD_SEC;
     dialogue.textContent = layerMode
@@ -1583,7 +1653,20 @@ async function init(): Promise<void> {
         micOn = up;
         syncLiveInstrumentGains();
         if (touchKeysMount?.isVisible()) touchKeysMount.setFocusLayer('all');
-        toast(micOn ? 'Mic ON' : 'Mic OFF');
+        if (micOn) {
+          void voiceRec.probe().then((ok) => {
+            if (!ok) {
+              micOn = false;
+              syncLiveInstrumentGains();
+              syncComposeToolbar();
+              toast(VoiceRecorder.micUnavailableMessage());
+            } else {
+              toast('Mic ON');
+            }
+          });
+        } else {
+          toast('Mic OFF');
+        }
         syncComposeToolbar();
         break;
       case 'leadvol':
@@ -1667,13 +1750,18 @@ async function init(): Promise<void> {
       previewArm?: LayerArm | null;
     },
   ): Promise<void> {
-    finishHookPlayback();
-    stopTransport();
-    const patternSnap = snapshotPattern();
     const restorePatternAfter = opts?.restorePattern ?? true;
     const reviewUi = opts?.reviewUi ?? false;
     const isOverdubMonitor = opts?.isOverdubMonitor ?? false;
     const previewArm = opts?.previewArm ?? null;
+    const monitorDuringRec = hookRecorder.active && (isOverdubMonitor || !!previewArm);
+    if (monitorDuringRec) {
+      stopMonitorPlaybackOnly();
+    } else {
+      finishHookPlayback();
+      stopTransport();
+    }
+    const patternSnap = snapshotPattern();
 
     hookPlayback = {
       hook,
@@ -1716,7 +1804,7 @@ async function init(): Promise<void> {
       hat: [...(hook.drum.pattern.hat ?? [])],
       clap: [...(hook.drum.pattern.clap ?? [])],
     };
-    if (!reviewUi) {
+    if (!reviewUi && !monitorDuringRec) {
       for (const s of ['kick', 'snare', 'hat', 'clap'] as DrumSound[]) {
         for (let i = 0; i < stepsPerBar; i++) pattern[s][i] = playbackPattern[s][i] ? 1 : 0;
       }
@@ -1758,24 +1846,41 @@ async function init(): Promise<void> {
   startTransport();
   updateGearStatus();
 
+  const helpCloseBtn = el<HTMLButtonElement>('help-close-btn');
+
   const tour = mountTour(studio, tourOverlay, () => {
     tourToggle.setAttribute('aria-expanded', 'false');
     tourToggle.textContent = 'Tour ▾';
   });
 
+  function closeTour(): void {
+    tour.hide();
+    tourToggle.setAttribute('aria-expanded', 'false');
+    tourToggle.textContent = 'Tour ▾';
+  }
+
+  function closeHelp(): void {
+    helpPanel.classList.add('hidden');
+    helpToggle.setAttribute('aria-expanded', 'false');
+    helpToggle.textContent = 'Help ▾';
+  }
+
+  function openHelp(): void {
+    closeTour();
+    helpPanel.classList.remove('hidden');
+    helpToggle.setAttribute('aria-expanded', 'true');
+    helpToggle.textContent = 'Help ▴';
+  }
+
   tourToggle.addEventListener('click', () => {
-    const open = tourOverlay.classList.contains('hidden');
-    if (open) {
+    const isOpen = !tourOverlay.classList.contains('hidden');
+    if (isOpen) {
+      closeTour();
+    } else {
+      closeHelp();
       tour.show();
       tourToggle.setAttribute('aria-expanded', 'true');
       tourToggle.textContent = 'Tour ▴';
-      helpPanel.classList.add('hidden');
-      helpToggle.setAttribute('aria-expanded', 'false');
-      helpToggle.textContent = 'Help ▾';
-    } else {
-      tour.hide();
-      tourToggle.setAttribute('aria-expanded', 'false');
-      tourToggle.textContent = 'Tour ▾';
     }
   });
 
@@ -1785,15 +1890,15 @@ async function init(): Promise<void> {
   };
   requestAnimationFrame(tourTick);
 
+  helpCloseBtn.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    closeHelp();
+  });
+
   helpToggle.addEventListener('click', () => {
-    const open = helpPanel.classList.toggle('hidden');
-    helpToggle.setAttribute('aria-expanded', open ? 'false' : 'true');
-    helpToggle.textContent = open ? 'Help ▾' : 'Help ▴';
-    if (!open) {
-      tour.hide();
-      tourToggle.setAttribute('aria-expanded', 'false');
-      tourToggle.textContent = 'Tour ▾';
-    }
+    const isOpen = !helpPanel.classList.contains('hidden');
+    if (isOpen) closeHelp();
+    else openHelp();
   });
 
   hooksToggle.addEventListener('click', () => {
@@ -1890,16 +1995,18 @@ async function init(): Promise<void> {
     document.body.classList.toggle('instrument-open', instrumentOpen);
     document.body.classList.toggle('keys-open', keysOpen);
     composeEl.classList.toggle('mt-expanded', mtPanelExpanded);
+    document.body.classList.toggle('mt-expanded', mtPanelExpanded);
 
     syncComposeToolbar();
 
     requestAnimationFrame(() => {
       const composeH = composeEl.offsetHeight;
-      const covered = composeH / Math.max(window.innerHeight, 1);
-      const reserve =
-        anyOpen || overdubOn ? `${Math.ceil(composeH + 10)}px` : '0px';
-      document.documentElement.style.setProperty('--compose-stack-h', reserve);
-      studio.setComposeCoverage(covered > 0 ? covered : 0);
+      const hooksReserve = isCoarsePointer ? 52 : 0;
+      const stripReserve = isCoarsePointer && overdubOn && !anyOpen && !mtPanelExpanded ? 88 : 0;
+      const covered = (composeH + hooksReserve + stripReserve) / Math.max(window.innerHeight, 1);
+      const reservePx = Math.ceil(composeH + hooksReserve + stripReserve + 10);
+      document.documentElement.style.setProperty('--compose-stack-h', `${reservePx}px`);
+      studio.setComposeCoverage(Math.min(0.72, covered > 0 ? covered : isCoarsePointer ? 0.16 : 0));
     });
   }
 
@@ -2064,6 +2171,7 @@ async function init(): Promise<void> {
     'pointerdown',
     () => {
       void audio.resume();
+      void voiceRec.probe();
     },
     { once: true },
   );

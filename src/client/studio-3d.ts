@@ -802,7 +802,7 @@ export class Studio3D {
     this.container = container;
     container.innerHTML = '';
     const canvas = document.createElement('canvas');
-    canvas.style.cssText = 'width:100%;height:100%;display:block';
+    canvas.style.cssText = 'width:100%;height:100%;display:block;touch-action:none';
     container.appendChild(canvas);
 
     this.camera = new THREE.PerspectiveCamera(48, 1, 0.05, 40);
@@ -880,14 +880,21 @@ export class Studio3D {
     const h = this.container.clientHeight;
     const aspect = w / Math.max(h, 1);
     const portrait = aspect < 0.82;
+    const coarse = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches;
     const cover = this.composeCover;
+    const mobileChrome = portrait && coarse ? Math.max(cover, 0.16) : cover;
 
     let fov = portrait ? 54 : 48;
     let z = portrait ? 3.5 : CAM_POS.z;
     let y = portrait ? 1.36 : CAM_POS.y;
     let lookY = portrait ? 0.56 : CAM_LOOK.y;
 
-    if (cover > 0.1) {
+    if (mobileChrome > 0.08) {
+      fov += mobileChrome * 8;
+      z += mobileChrome * 1.15;
+      y += mobileChrome * 0.14;
+      lookY += mobileChrome * 0.05;
+    } else if (cover > 0.1) {
       fov += cover * 8;
       z += cover * 1.1;
       y += cover * 0.12;
@@ -1777,29 +1784,30 @@ export class Studio3D {
   }
 
   private setupInput(canvas: HTMLCanvasElement): void {
-    const pick = (ev: PointerEvent): THREE.Intersection | null => {
+    const pick = (clientX: number, clientY: number): THREE.Intersection | null => {
       const rect = canvas.getBoundingClientRect();
-      this.pointer.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
-      this.pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
+      this.pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+      this.pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
       this.raycaster.setFromCamera(this.pointer, this.camera);
       return this.raycaster.intersectObjects(this.interactive, false)[0] ?? null;
     };
 
-    const keyFromPoint = (ev: PointerEvent): KeyObj | null => {
-      const hit = pick(ev);
+    const keyFromPoint = (clientX: number, clientY: number): KeyObj | null => {
+      const hit = pick(clientX, clientY);
       if (!hit) return null;
       const p = hit.object.userData.pick as Record<string, unknown> | undefined;
       if (p?.kind !== 'melody-key' && p?.kind !== 'bass-key') return null;
       return this.keys.find((k) => k.mesh === hit.object) ?? null;
     };
 
-    canvas.addEventListener('pointerdown', (ev) => {
-      const hit = pick(ev);
+    const handlePointerDown = (ev: PointerEvent): void => {
+      const hit = pick(ev.clientX, ev.clientY);
       if (!hit) return;
       const p = hit.object.userData.pick as Record<string, unknown>;
       if (!p) return;
 
       if (p.kind === 'melody-key' || p.kind === 'bass-key') {
+        ev.preventDefault();
         const ko = this.keys.find((k) => k.mesh === hit.object);
         if (!ko) return;
         try {
@@ -1830,19 +1838,66 @@ export class Studio3D {
         const m = a.match(/^(.+)-(up|down)$/);
         if (m) cb.onCtrl(m[1]!, m[2] as 'up' | 'down');
       }
-    });
+    };
+
+    canvas.addEventListener('pointerdown', handlePointerDown, { passive: false });
 
     canvas.addEventListener('pointermove', (ev) => {
       const held = this.touchIds.get(ev.pointerId);
       if (!held || held === 'rec' || !('midi' in held)) return;
-      const ko = keyFromPoint(ev);
+      const ko = keyFromPoint(ev.clientX, ev.clientY);
       if (!ko || ko === held) return;
+      ev.preventDefault();
       this.releaseKey(held, ev.pointerId);
       this.pressKey(ko, ev.pointerId);
-    });
+    }, { passive: false });
 
     canvas.addEventListener('pointerup', (ev) => this.releasePointer(ev.pointerId));
     canvas.addEventListener('pointercancel', (ev) => this.releasePointer(ev.pointerId));
+
+    const touchKeyFrom = (touch: Touch): KeyObj | null => keyFromPoint(touch.clientX, touch.clientY);
+
+    canvas.addEventListener(
+      'touchstart',
+      (ev) => {
+        for (const touch of ev.changedTouches) {
+          const ko = touchKeyFrom(touch);
+          if (!ko) continue;
+          ev.preventDefault();
+          const id = touch.identifier + 10_000;
+          if (this.touchIds.get(id) === ko) continue;
+          const held = this.touchIds.get(id);
+          if (held && held !== 'rec' && 'midi' in held) this.releaseKey(held, id);
+          this.pressKey(ko, id);
+        }
+      },
+      { passive: false },
+    );
+
+    canvas.addEventListener(
+      'touchmove',
+      (ev) => {
+        for (const touch of ev.changedTouches) {
+          const id = touch.identifier + 10_000;
+          const held = this.touchIds.get(id);
+          if (!held || held === 'rec' || !('midi' in held)) continue;
+          const ko = touchKeyFrom(touch);
+          if (!ko || ko === held) continue;
+          ev.preventDefault();
+          this.releaseKey(held, id);
+          this.pressKey(ko, id);
+        }
+      },
+      { passive: false },
+    );
+
+    const endTouch = (ev: TouchEvent): void => {
+      for (const touch of ev.changedTouches) {
+        this.releasePointer(touch.identifier + 10_000);
+      }
+    };
+    canvas.addEventListener('touchend', endTouch, { passive: true });
+    canvas.addEventListener('touchcancel', endTouch, { passive: true });
 
     window.addEventListener('blur', () => this.releaseAllKeys());
     document.addEventListener('visibilitychange', () => {

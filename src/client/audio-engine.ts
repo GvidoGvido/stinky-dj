@@ -25,6 +25,7 @@ export class VoiceRecorder {
   private chunks: Blob[] = [];
   private tapDest: MediaStreamAudioDestinationNode | null = null;
   private tapNodes: AudioNode[] = [];
+  private probeResult: boolean | null = null;
 
   constructor(private getCtx: () => AudioContext) {}
 
@@ -32,12 +33,42 @@ export class VoiceRecorder {
     return this.recorder?.state === 'recording';
   }
 
+  /** Lightweight check — does not leave recording armed. */
+  async probe(): Promise<boolean> {
+    if (this.probeResult !== null) return this.probeResult;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      this.probeResult = false;
+      return false;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((t) => t.stop());
+      this.probeResult = true;
+      return true;
+    } catch {
+      this.probeResult = false;
+      return false;
+    }
+  }
+
+  static micUnavailableMessage(): string {
+    let embedded = false;
+    try {
+      embedded = window.self !== window.top;
+    } catch {
+      embedded = true;
+    }
+    if (embedded) {
+      return 'Microphone is blocked inside the Reddit app. Voice works in local dev (npm run local) — Reddit iframes may not allow mic yet.';
+    }
+    return 'Microphone blocked — check browser permissions and try again.';
+  }
+
   async start(): Promise<boolean> {
     if (!navigator.mediaDevices?.getUserMedia) return false;
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          // Raw-ish capture — browser DSP often hurts musical takes.
           echoCancellation: false,
           noiseSuppression: false,
           autoGainControl: false,
@@ -45,6 +76,7 @@ export class VoiceRecorder {
           sampleRate: { ideal: 48000 },
         },
       });
+      this.probeResult = true;
       const ctx = this.getCtx();
       const source = ctx.createMediaStreamSource(this.stream);
       const hpf = ctx.createBiquadFilter();
@@ -81,6 +113,7 @@ export class VoiceRecorder {
       this.recorder.start(250);
       return true;
     } catch {
+      this.probeResult = false;
       this.cleanup();
       return false;
     }

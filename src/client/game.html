@@ -9,6 +9,7 @@
     />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta http-equiv="Permissions-Policy" content="microphone=(self)" />
     <title>Hook of the Day</title>
   </head>
   <body>
@@ -27,14 +28,25 @@
         <div class="pill" id="round-pill">Round</div>
       </div>
 
-      <div id="tour-overlay" class="tour-overlay hidden"></div>
-
       <div class="help-panel hidden" id="help-panel">
+        <button
+          type="button"
+          class="help-close-btn"
+          id="help-close-btn"
+          aria-label="Close help panel"
+          title="Close help"
+        >
+          ✕
+        </button>
+        <div class="help-section">
+          <h3>Mobile</h3>
+          <p>The <strong>3D studio</strong> stays visible up top — you can tap keys there, but for the best experience open the dedicated panels from the top bar: <strong>Console</strong> (mix &amp; mic), <strong>Drums</strong> (step sequencer), and <strong>🎹 Keys</strong> (big touch piano + bass). They’re easier to play and record with than the small 3D keys alone.</p>
+          <p>Tap <strong>✕</strong> on any panel to close it. Expand <strong>Record multitrack</strong> at the bottom to layer drums, keys, bass, and voice.</p>
+        </div>
         <div class="help-section">
           <h3>Synth (center)</h3>
           <p>Melody: <strong>A–K</strong> bottom row, <strong>O L P ; '</strong> upper row, <strong>Z X C V B N</strong> for high notes (G5–C6).</p>
           <p>Bass: <strong>1–0</strong>, then <strong>- = [</strong> for the lowest notes on the right.</p>
-          <p>On mobile, the <strong>3D studio</strong> stays visible up top — use <strong>Console</strong>, <strong>Drums</strong>, and <strong>🎹 Keys</strong> panels below (tap <strong>✕</strong> to close any).</p>
           <p><strong>SYN</strong> cycles lead sounds — piano, guitar, sax, strings, brass, and more.</p>
           <p>Console: tap <strong>▲</strong> to raise / turn on, <strong>▼</strong> to lower / turn off.</p>
           <p><strong>SUST</strong> (▲ on / ▼ off): hold keys to ring notes while pressed; off = short plucks.</p>
@@ -70,6 +82,15 @@
             <div class="mt-head-actions">
               <button type="button" class="mt-play-loop" id="mt-play-loop" disabled>▶ Play</button>
               <button type="button" class="mt-submit-compact hidden" id="mt-submit" disabled title="Submit recorded layers">Submit ✓</button>
+              <button
+                type="button"
+                class="mt-close-btn"
+                id="mt-close-btn"
+                aria-label="Close multitrack panel"
+                title="Close panel"
+              >
+                ✕
+              </button>
             </div>
           </div>
           <div class="mt-collapsed-summary" id="mt-collapsed-summary" aria-hidden="true"></div>
@@ -131,6 +152,8 @@
       <div class="hooks-drawer" id="hooks-drawer">
         <div id="hooks-list" class="hooks"></div>
       </div>
+
+      <div id="tour-overlay" class="tour-overlay hidden"></div>
     </div>
 
     <script type="module" src="game.ts" defer></script>
