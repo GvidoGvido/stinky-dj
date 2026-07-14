@@ -545,16 +545,15 @@ export class AudioEngine {
     if (this.wobbleGain) this.wobbleGain.gain.value = 0;
     const mix = this.playbackMixRestore ?? this.mix;
     const review = opts?.review ?? false;
-    const dryReview = review;
-    const echoMul = dryReview ? 0 : 0.75;
-    const revMul = dryReview ? 0 : 0.7;
-    const fbBase = dryReview ? 0 : 0.08;
-    const fbEcho = dryReview ? 0 : 0.22;
-    const stemEcho = dryReview ? 0 : 0.22;
-    const stemEchoRange = dryReview ? 0 : 0.12;
-    const stemBassEcho = dryReview ? 0 : 0.18;
-    const stemBassRange = dryReview ? 0 : 0.1;
-    const gainBoost = dryReview ? 1.22 : 1;
+    const echoMul = 0.75;
+    const revMul = 0.7;
+    const fbBase = 0.08;
+    const fbEcho = 0.22;
+    const stemEcho = 0.22;
+    const stemEchoRange = 0.12;
+    const stemBassEcho = 0.18;
+    const stemBassRange = 0.1;
+    const gainBoost = 1;
     if (review && this.limiter) {
       if (!this.limiterRestore) {
         this.limiterRestore = {
@@ -687,26 +686,26 @@ export class AudioEngine {
     }
   }
 
-  /** Dry instrument monitoring while recording — no delay/reverb on keys/bass. */
   beginRecordingMonitor(): void {
     if (this.recordingMonitorRestore) return;
     this.noteOffAll();
     this.flushFxTails();
-    this.recordingMonitorRestore = {
+    const snap = {
       delayWet: this.delayWet?.gain.value ?? 0,
       delayFeedback: this.delayFeedback?.gain.value ?? 0,
       reverbWet: this.reverbWet?.gain.value ?? 0,
       synthFx: this.synthFxSend?.gain.value ?? 0,
       bassFx: this.bassFxSend?.gain.value ?? 0,
-      masterGain: this.master?.gain.value ?? 0.84,
+      masterGain: this.master?.gain.value ?? 0.85,
     };
-    if (this.delayWet) this.delayWet.gain.value = 0;
-    if (this.delayFeedback) this.delayFeedback.gain.value = 0;
-    if (this.reverbWet) this.reverbWet.gain.value = 0;
-    if (this.synthFxSend) this.synthFxSend.gain.value = 0;
-    if (this.bassFxSend) this.bassFxSend.gain.value = 0;
+    this.recordingMonitorRestore = snap;
+    if (this.delayWet) this.delayWet.gain.value = this.mix.echo;
+    if (this.delayFeedback) this.delayFeedback.gain.value = 0.15 + this.mix.echo * 0.45;
+    if (this.reverbWet) this.reverbWet.gain.value = this.mix.reverb;
+    if (this.synthFxSend) this.synthFxSend.gain.value = snap.synthFx || 0.38;
+    if (this.bassFxSend) this.bassFxSend.gain.value = snap.bassFx || 0.38;
     if (this.drumFxSend) this.drumFxSend.gain.value = 0;
-    if (this.master) this.master.gain.value = 0.68;
+    if (this.master) this.master.gain.value = 0.8;
   }
 
   endRecordingMonitor(): void {
