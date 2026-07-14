@@ -6,7 +6,6 @@ import { Studio3D } from './studio-3d';
 const startButton = document.getElementById('start-button') as HTMLButtonElement;
 const trackEl = document.getElementById('daily-track') as HTMLSpanElement;
 const subEl = document.getElementById('daily-sub') as HTMLSpanElement;
-const streakEl = document.getElementById('streak') as HTMLDivElement;
 const backdropEl = document.getElementById('studio-backdrop') as HTMLDivElement;
 
 const emptyPattern = (): Record<DrumSound, number[]> => ({
@@ -63,14 +62,6 @@ async function init(): Promise<void> {
 
     trackEl.textContent = `Round ${data.now.roundId} (GMT+2)`;
     subEl.textContent = `Seed ${data.now.seed.toString(16)}`;
-
-    if (data.prevReveal?.coWinners?.length) {
-      const winners = data.prevReveal.coWinners
-        .slice(0, 3)
-        .map((w) => `u/${w.authorUsername}`)
-        .join(', ');
-      streakEl.textContent = `Yesterday’s winner(s): ${winners}`;
-    }
   } catch {
     /* static copy */
   }

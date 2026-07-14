@@ -14,7 +14,8 @@
     <div class="backdrop-vignette" aria-hidden="true"></div>
     <div class="ps2-scanlines" aria-hidden="true"></div>
 
-    <main class="content ps2-menu">
+    <main class="content">
+      <section class="menu-card">
       <div class="note-hero" aria-hidden="true">
         <svg class="cel-note" viewBox="0 0 120 160" xmlns="http://www.w3.org/2000/svg">
           <defs>
@@ -48,27 +49,22 @@
         </svg>
       </div>
 
-      <h1 class="title">
-        <span class="title-chrome">Hook</span>
-        <span class="title-chrome title-of">of the</span>
-        <span class="title-chrome title-day">Day</span>
-      </h1>
+      <h1 class="title">Hook of the Day</h1>
 
       <p class="tagline">
         Hey Mozart! Ready to give it a shot? Spin your hook of the day!
       </p>
-
-      <div class="daily" id="daily">
-        <span class="daily-track" id="daily-track">Today’s Round</span>
-        <span class="daily-sub" id="daily-sub">Resets at 00:00 (GMT+2)</span>
-      </div>
 
       <button class="start-button" id="start-button">
         <span class="start-cursor">▶</span>
         <span class="start-label">Spin your hook</span>
       </button>
 
-      <div class="streak" id="streak"></div>
+      <div class="round-line">
+        <span id="daily-track">Today’s Round</span>
+        <span id="daily-sub">Resets at 00:00 (GMT+2)</span>
+      </div>
+      </section>
     </main>
 
     <script type="module" src="splash.ts" defer></script>
