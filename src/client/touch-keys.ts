@@ -8,7 +8,7 @@ type Layer = 'melody' | 'bass';
 
 export type TouchKeysOptions = {
   container: HTMLElement;
-  onNoteDown: (midi: number, id: number, layer: Layer) => void;
+  onNoteDown: (midi: number, id: number, layer: Layer, velocity?: number) => void;
   onNoteUp: (midi: number, id: number, layer: Layer) => void;
   onClose?: () => void;
 };
@@ -170,11 +170,11 @@ export function mountTouchKeys(opts: TouchKeysOptions): {
     return inputId === MOUSE_INPUT_ID ? MOUSE_INPUT_ID : noteInputId(inputId);
   }
 
-  function press(inputId: number, key: HTMLElement): void {
+  function press(inputId: number, key: HTMLElement, pressure?: number): void {
     if (active.has(inputId)) release(inputId);
     addKeyActive(key);
     active.set(inputId, key);
-    opts.onNoteDown(Number(key.dataset.midi), externalInputId(inputId), key.dataset.layer as Layer);
+    opts.onNoteDown(Number(key.dataset.midi), externalInputId(inputId), key.dataset.layer as Layer, pressure);
   }
 
   function release(inputId: number): void {
@@ -256,14 +256,14 @@ export function mountTouchKeys(opts: TouchKeysOptions): {
     globalMoveBound = false;
   };
 
-  const beginAt = (inputId: number, x: number, y: number, ev: Event): void => {
+  const beginAt = (inputId: number, x: number, y: number, ev: Event, pressure?: number): void => {
     if (document.body.classList.contains('instruments-blocked')) return;
     const key = keyFromPoint(x, y);
     if (!key) return;
     ev.preventDefault();
     ev.stopPropagation();
     setHoverKey(null);
-    press(inputId, key);
+    press(inputId, key, pressure);
     bindGlobalMove();
     lockComposeScroll();
     if (ev instanceof PointerEvent) {
@@ -289,7 +289,7 @@ export function mountTouchKeys(opts: TouchKeysOptions): {
       'touchstart',
       (ev) => {
         for (const touch of ev.changedTouches) {
-          beginAt(touch.identifier, touch.clientX, touch.clientY, ev);
+          beginAt(touch.identifier, touch.clientX, touch.clientY, ev, touch.force || undefined);
         }
       },
       { passive: false },
@@ -297,7 +297,7 @@ export function mountTouchKeys(opts: TouchKeysOptions): {
 
     surface.addEventListener('pointerdown', (ev) => {
       if (ev.pointerType === 'touch') return;
-      beginAt(inputIdForPointer(ev), ev.clientX, ev.clientY, ev);
+      beginAt(inputIdForPointer(ev), ev.clientX, ev.clientY, ev, ev.pressure || undefined);
     });
 
     surface.addEventListener('pointermove', (ev) => {

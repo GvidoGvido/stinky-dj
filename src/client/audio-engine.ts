@@ -14,6 +14,8 @@ const DEFAULT_MIX: MixSettings = { echo: 0.22, reverb: 0.18, attack: 0.35, vox: 
 export class AudioEngine {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
+  private glue: DynamicsCompressorNode | null = null;
+  private airShelf: BiquadFilterNode | null = null;
   private limiter: DynamicsCompressorNode | null = null;
   private drumBus: GainNode | null = null;
   private synthBus: GainNode | null = null;
@@ -55,7 +57,19 @@ export class AudioEngine {
     this.ctx = new AudioCtx({ latencyHint: 'interactive' });
 
     this.master = this.ctx.createGain();
-    this.master.gain.value = 0.84;
+    this.master.gain.value = 0.85;
+
+    this.glue = this.ctx.createDynamicsCompressor();
+    this.glue.threshold.value = -10;
+    this.glue.knee.value = 22;
+    this.glue.ratio.value = 1.5;
+    this.glue.attack.value = 0.03;
+    this.glue.release.value = 0.25;
+
+    this.airShelf = this.ctx.createBiquadFilter();
+    this.airShelf.type = 'highshelf';
+    this.airShelf.frequency.value = 9500;
+    this.airShelf.gain.value = 1.6;
 
     this.synthBus = this.ctx.createGain();
     this.synthBus.gain.value = 0.78;
@@ -79,11 +93,11 @@ export class AudioEngine {
     this.voiceComp.release.value = 0.16;
 
     this.limiter = this.ctx.createDynamicsCompressor();
-    this.limiter.threshold.value = -6;
+    this.limiter.threshold.value = -3;
     this.limiter.knee.value = 2;
     this.limiter.ratio.value = 12;
-    this.limiter.attack.value = 0.002;
-    this.limiter.release.value = 0.1;
+    this.limiter.attack.value = 0.003;
+    this.limiter.release.value = 0.12;
 
     this.delay = this.ctx.createDelay(1.2);
     this.delay.delayTime.value = 0.22;
@@ -148,7 +162,9 @@ export class AudioEngine {
     this.reverb.connect(this.reverbWet);
     this.reverbWet.connect(this.master);
 
-    this.master.connect(this.limiter!);
+    this.master.connect(this.glue!);
+    this.glue!.connect(this.airShelf!);
+    this.airShelf!.connect(this.limiter!);
     this.limiter!.connect(this.ctx.destination);
     this.applyMix();
     this.applyVoxFx();
@@ -251,6 +267,18 @@ export class AudioEngine {
             ? 3.5
             : 0.7 + tone * 0.8;
 
+    const hasFilterLfo = isBass && (preset === 'wobble' || preset === 'acid');
+    const wantFilterEnv =
+      !hasFilterLfo && (isBass || preset === 'pluck' || preset === 'guitar');
+    if (wantFilterEnv) {
+      const restHz = filter.frequency.value;
+      const openHz = Math.min(restHz * (isBass ? 4 : 3), 13000);
+      const decay = preset === 'pluck' ? 0.16 : isBass ? 0.14 : 0.24;
+      filter.frequency.cancelScheduledValues(t0);
+      filter.frequency.setValueAtTime(openHz, t0);
+      filter.frequency.exponentialRampToValueAtTime(Math.max(restHz, 60), t0 + decay);
+    }
+
     const gain = ctx.createGain();
     gain.gain.value = 0.0001;
     osc.connect(filter);
@@ -296,6 +324,18 @@ export class AudioEngine {
 
     reg(osc);
 
+    if (!isBass && preset !== 'piano' && preset !== 'pluck' && preset !== 'organ') {
+      const uni = ctx.createOscillator();
+      uni.type = osc.type;
+      uni.frequency.value = freq;
+      uni.detune.value = detuneCents + 7;
+      const ug = ctx.createGain();
+      ug.gain.value = 0.5;
+      uni.connect(ug);
+      ug.connect(filter);
+      reg(uni);
+    }
+
     if (preset === 'piano') {
       for (const mult of [2, 3]) {
         const h = ctx.createOscillator();
@@ -307,6 +347,14 @@ export class AudioEngine {
         hg.connect(gain);
         reg(h);
       }
+      const body = ctx.createOscillator();
+      body.type = 'sine';
+      body.frequency.value = freq * 0.5;
+      const bg = ctx.createGain();
+      bg.gain.value = 0.1 * v;
+      body.connect(bg);
+      bg.connect(gain);
+      reg(body);
     }
 
     if (preset === 'organ') {
@@ -830,22 +878,53 @@ export class AudioEngine {
       return;
     }
 
-    // Acoustic snare: tuned drum-body tone underneath the noise crack
-    if (sound === 'snare' && kit === 'classic') {
+    if (sound === 'snare') {
+      const bodyStart = kit === '909' ? 258 : kit === 'electro' ? 300 : kit === 'lofi' ? 190 : 220;
+      const bodyEnd = bodyStart * 0.72;
+      const bodyAmp = kit === 'classic' ? 0.32 : kit === 'lofi' ? 0.22 : 0.26;
       const body = ctx.createOscillator();
       body.type = 'triangle';
-      body.frequency.setValueAtTime(220, t0);
-      body.frequency.exponentialRampToValueAtTime(160, t0 + 0.08);
+      body.frequency.setValueAtTime(bodyStart, t0);
+      body.frequency.exponentialRampToValueAtTime(bodyEnd, t0 + 0.08);
       const bodyG = ctx.createGain();
       bodyG.gain.setValueAtTime(0.0001, t0);
-      bodyG.gain.linearRampToValueAtTime(0.32 * gainMul, t0 + 0.003);
+      bodyG.gain.linearRampToValueAtTime(bodyAmp * gainMul, t0 + 0.003);
       bodyG.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.12);
       body.connect(bodyG);
       bodyG.connect(bus);
       body.start(t0);
       body.stop(t0 + 0.14);
       this.trackDrum(body);
-      // The noise part continues below with classic-tuned filter values.
+    }
+
+    if (sound === 'clap') {
+      const clapFreq = kit === 'classic' ? 2600 : kit === 'lofi' ? 1800 : 2200;
+      const taps: Array<[number, number, number]> = [
+        [0, 0.36, 0.045],
+        [0.011, 0.32, 0.045],
+        [0.024, 0.28, 0.045],
+        [0.04, 0.46, 0.09],
+      ];
+      for (const [off, amp, tlen] of taps) {
+        const buf = ctx.createBuffer(1, Math.max(1, Math.floor(ctx.sampleRate * tlen)), ctx.sampleRate);
+        const cd = buf.getChannelData(0);
+        for (let i = 0; i < cd.length; i++) cd[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / cd.length, 1.6);
+        const s = ctx.createBufferSource();
+        s.buffer = buf;
+        const f = ctx.createBiquadFilter();
+        f.type = 'bandpass';
+        f.frequency.value = clapFreq;
+        f.Q.value = 1.4;
+        const cg = ctx.createGain();
+        cg.gain.value = amp * gainMul;
+        s.connect(f);
+        f.connect(cg);
+        cg.connect(bus);
+        s.start(t0 + off);
+        s.stop(t0 + off + tlen + 0.02);
+        this.trackDrum(s);
+      }
+      return;
     }
 
     const len = sound === 'hat' ? (kit === 'classic' ? 0.14 : 0.1) : kit === 'classic' ? 0.24 : 0.18;
@@ -865,17 +944,11 @@ export class AudioEngine {
           : kit === '909'
             ? 7500
             : 6500
-        : sound === 'clap'
-          ? kit === 'classic'
-            ? 2600
-            : kit === 'lofi'
-              ? 1800
-              : 2200
-          : kit === 'classic'
-            ? 2800
-            : kit === '909'
-              ? 2000
-              : 1800;
+        : kit === 'classic'
+          ? 2800
+          : kit === '909'
+            ? 2000
+            : 1800;
     filter.Q.value = sound === 'hat' ? (kit === 'classic' ? 0.5 : 0.7) : kit === 'classic' ? 0.8 : 1.2;
 
     const g = ctx.createGain();
@@ -888,13 +961,9 @@ export class AudioEngine {
             : kit === 'lofi'
               ? 0.42
               : 0.55
-        : sound === 'clap'
-          ? kit === 'classic'
-            ? 0.4
-            : 0.45
-          : kit === 'classic'
-            ? 0.2
-            : 0.25;
+        : kit === 'classic'
+          ? 0.2
+          : 0.25;
     const tail = sound === 'hat' ? (kit === 'classic' ? 0.09 : 0.06) : kit === 'classic' ? 0.19 : 0.14;
     g.gain.setValueAtTime(0.0001, t0);
     g.gain.linearRampToValueAtTime(amp * gainMul, t0 + 0.002);
@@ -906,6 +975,28 @@ export class AudioEngine {
     src.start(t0);
     src.stop(t0 + len + 0.05);
     this.trackDrum(src);
+
+    if (sound === 'hat' && kit !== 'classic' && kit !== 'lofi') {
+      const hpf = ctx.createBiquadFilter();
+      hpf.type = 'highpass';
+      hpf.frequency.value = 7200;
+      const mg = ctx.createGain();
+      const metalTail = kit === '808' ? 0.08 : 0.05;
+      mg.gain.setValueAtTime(0.0001, t0);
+      mg.gain.linearRampToValueAtTime(0.09 * gainMul, t0 + 0.002);
+      mg.gain.exponentialRampToValueAtTime(0.0001, t0 + metalTail);
+      hpf.connect(mg);
+      mg.connect(bus);
+      for (const partial of [8100, 10430, 12210]) {
+        const o = ctx.createOscillator();
+        o.type = 'square';
+        o.frequency.value = partial;
+        o.connect(hpf);
+        o.start(t0);
+        o.stop(t0 + metalTail + 0.02);
+        this.trackDrum(o);
+      }
+    }
   }
 
   async preloadVoice(track: VoiceTrack): Promise<void> {

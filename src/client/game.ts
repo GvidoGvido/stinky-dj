@@ -67,6 +67,30 @@ function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
 }
 
+function humanizeVel(base: number, spread: number): number {
+  return clamp(base + (Math.random() * 2 - 1) * spread, 0.35, 1);
+}
+
+function captureVelocity(pressure: number | undefined, base: number, spread: number): number {
+  if (typeof pressure === 'number' && pressure > 0 && Math.abs(pressure - 0.5) > 0.001) {
+    return clamp(0.45 + pressure * 0.55, 0.4, 1);
+  }
+  return humanizeVel(base, spread);
+}
+
+function drumStepVelocity(step: number, stepsPerBar: number, sound: DrumSound, gain: number): number {
+  const quarter = Math.max(1, Math.round(stepsPerBar / 4));
+  const eighth = Math.max(1, Math.round(quarter / 2));
+  const onQuarter = step % quarter === 0;
+  const onEighth = step % eighth === 0;
+  let accent: number;
+  if (sound === 'hat') accent = onQuarter ? 1 : step % 2 === 0 ? 0.8 : 0.62;
+  else if (sound === 'clap') accent = onQuarter ? 1 : 0.82;
+  else accent = onQuarter ? 1.06 : onEighth ? 0.9 : 0.74;
+  const jitter = (Math.random() * 2 - 1) * 0.05;
+  return clamp(gain * (accent + jitter), 0.15, 1.15);
+}
+
 async function apiInit(): Promise<InitResponse> {
   const res = await fetch('/api/init');
   if (!res.ok) throw new Error(`init failed (${res.status})`);
@@ -920,11 +944,10 @@ async function init(): Promise<void> {
     const tick = () => {
       if (drumsOn || patternPreviewPlaying) {
         const s = transportStep;
-        const gainMul = 0.9;
-        if (pattern.kick[s]) recordDrumHit('kick', gainMul);
-        if (pattern.snare[s]) recordDrumHit('snare', gainMul);
-        if (pattern.hat[s]) recordDrumHit('hat', gainMul);
-        if (pattern.clap[s]) recordDrumHit('clap', gainMul);
+        if (pattern.kick[s]) recordDrumHit('kick', drumStepVelocity(s, stepsPerBar, 'kick', 0.95));
+        if (pattern.snare[s]) recordDrumHit('snare', drumStepVelocity(s, stepsPerBar, 'snare', 0.95));
+        if (pattern.hat[s]) recordDrumHit('hat', drumStepVelocity(s, stepsPerBar, 'hat', 0.95));
+        if (pattern.clap[s]) recordDrumHit('clap', drumStepVelocity(s, stepsPerBar, 'clap', 0.95));
       }
       transportStep = (transportStep + 1) % stepsPerBar;
     };
@@ -1259,9 +1282,9 @@ async function init(): Promise<void> {
     let t = fromSec;
     while (t < untilSec - 0.001) {
       const step = Math.floor(t / stepSec) % stepsPerBar;
-      const gainMul = drum.gain;
       for (const sound of sounds) {
         if (drum.pattern[sound]?.[step]) {
+          const gainMul = drumStepVelocity(step, stepsPerBar, sound, drum.gain);
           const offset = t - fromSec;
           if (playAt !== undefined) {
             audio.drumHit(sound, gainMul, playAt + offset);
@@ -1394,12 +1417,19 @@ async function init(): Promise<void> {
     }
   }
 
-  function onNoteDown(midi: number, source: NoteSource, inputId: number, layer: 'melody' | 'bass'): void {
+  function onNoteDown(
+    midi: number,
+    source: NoteSource,
+    inputId: number,
+    layer: 'melody' | 'bass',
+    pressure?: number,
+  ): void {
     if (instrumentsBlocked()) return;
     void audio.resume();
     const slot = `${source}:${inputId}`;
+    const vel = captureVelocity(pressure, 0.86, 0.1);
     if (hookRecorder.active) {
-      if (shouldRecordLayer(layer)) hookRecorder.noteDown(slot, midi, 0.92, layer);
+      if (shouldRecordLayer(layer)) hookRecorder.noteDown(slot, midi, vel, layer);
     }
     releaseHeldNote(source, inputId);
 
@@ -1408,10 +1438,10 @@ async function init(): Promise<void> {
 
     if (layer === 'bass') {
       audio.setBassGain(bassGain);
-      audio.noteOn(voiceId, midi, 0.92, bassPreset, true);
+      audio.noteOn(voiceId, midi, vel, bassPreset, true);
     } else {
       audio.setLeadGain(leadGain);
-      audio.noteOn(voiceId, midi, 0.92, preset, false, detune, tone);
+      audio.noteOn(voiceId, midi, vel, preset, false, detune, tone);
     }
   }
 
@@ -1815,8 +1845,11 @@ async function init(): Promise<void> {
       if (instrumentsBlocked()) return;
       void audio.resume();
       pattern[sound][step] = pattern[sound][step] ? 0 : 1;
-      audio.drumHit(sound, 0.7);
-      if (hookRecorder.active) hookRecorder.drumHit(sound, 0.7);
+      {
+        const dv = humanizeVel(0.72, 0.12);
+        audio.drumHit(sound, dv);
+        if (hookRecorder.active) hookRecorder.drumHit(sound, dv);
+      }
       touchDrums?.refresh();
     },
     onRecPress: toggleStudioRec,
@@ -2107,8 +2140,11 @@ async function init(): Promise<void> {
       if (instrumentsBlocked()) return;
       void audio.resume();
       pattern[sound][step] = pattern[sound][step] ? 0 : 1;
-      audio.drumHit(sound, 0.7);
-      if (hookRecorder.active) hookRecorder.drumHit(sound, 0.7);
+      {
+        const dv = humanizeVel(0.72, 0.12);
+        audio.drumHit(sound, dv);
+        if (hookRecorder.active) hookRecorder.drumHit(sound, dv);
+      }
     },
     onCtrl: handleCtrl,
     onPatternPlayToggle: togglePatternPlay,
@@ -2121,7 +2157,7 @@ async function init(): Promise<void> {
   });
   touchKeysMount = mountTouchKeys({
     container: composePanelNodes.keys,
-    onNoteDown: (midi, id, layer) => onNoteDown(midi, 'touch-keys', id, layer),
+    onNoteDown: (midi, id, layer, velocity) => onNoteDown(midi, 'touch-keys', id, layer, velocity),
     onNoteUp: (midi, id, layer) => onNoteUp(midi, 'touch-keys', id, layer),
     onClose: () => setKeysOpen(false),
   });
