@@ -503,10 +503,10 @@ function makeRedditPoster(): HTMLCanvasElement {
   ctx.fillStyle = '#ff4500';
   ctx.font = 'bold 28px Trebuchet MS, sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText('r/HookOfTheDay', 128, 230);
+  ctx.fillText('r/Tunebox', 128, 230);
   ctx.font = '16px Trebuchet MS, sans-serif';
   ctx.fillStyle = '#ccc';
-  ctx.fillText('drop your hook', 128, 265);
+  ctx.fillText('spin your tune', 128, 265);
   return c;
 }
 

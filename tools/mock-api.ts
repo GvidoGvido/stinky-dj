@@ -130,7 +130,7 @@ app.post('/api/submit-hook', async (c) => {
 
   const byUser = getHookByUser(now.roundId);
   if (byUser[USERNAME]) {
-    return c.json({ status: 'error', message: 'You already submitted a hook for this round' }, 400);
+    return c.json({ status: 'error', message: 'You already submitted a jingle for this round' }, 400);
   }
 
   const hookId = deterministicHookId(now.roundId, USERNAME);

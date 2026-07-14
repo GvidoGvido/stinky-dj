@@ -151,7 +151,7 @@ function renderHooks(list: HookPreview[]): void {
   if (list.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'hooks-empty';
-    empty.textContent = 'No hooks yet today — be the first to drop one!';
+    empty.textContent = 'No jingles yet today — be the first to drop one!';
     container.appendChild(empty);
     return;
   }
@@ -306,7 +306,7 @@ async function init(): Promise<void> {
     recordingInstruments ? Math.max(0, audio.ensure().currentTime - recTimeAnchor) : 0,
   );
   const isCoarsePointer = window.matchMedia('(pointer: coarse)').matches;
-  const DJ_WELCOME = 'DJ: Drop one hook today — tap REC when you\'re ready.';
+  const DJ_WELCOME = 'DJ: Drop one jingle today — tap REC when you\'re ready.';
 
   /** Desktop-only DJ banner; on mobile use rec-status + toasts instead. */
   function setDialogue(text: string): void {
@@ -1603,7 +1603,7 @@ async function init(): Promise<void> {
       applauseEl.classList.remove('hidden');
       window.setTimeout(() => applauseEl.classList.add('hidden'), 900);
       toast('Hook recorded!');
-      setDialogue('DJ: Submitted. Vote on today’s hooks!');
+      setDialogue('DJ: Submitted. Vote on today’s jingles!');
       setRecStatus('Submitted ✓');
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Submit failed');
@@ -1614,7 +1614,7 @@ async function init(): Promise<void> {
 
   async function startRecording(mode: 'layer' | 'full' = 'layer'): Promise<void> {
     if (submitted || player?.myHookId) {
-      toast('Already submitted today — one hook per day');
+      toast('Already submitted today — one jingle per day');
       return;
     }
     fullTakeRecording = mode === 'full';
@@ -1695,8 +1695,8 @@ async function init(): Promise<void> {
 
   function toggleStudioRec(): void {
     if (submitted || player?.myHookId) {
-      toast('Already submitted today — one hook per day');
-      setDialogue('DJ: You already dropped today’s hook.');
+      toast('Already submitted today — one jingle per day');
+      setDialogue('DJ: You already dropped today’s jingle.');
       return;
     }
     if (hookRecorder.active) {
@@ -1708,8 +1708,8 @@ async function init(): Promise<void> {
 
   function toggleLayerRec(arm?: LayerArm): void {
     if (submitted || player?.myHookId) {
-      toast('Already submitted today — one hook per day');
-      setDialogue('DJ: You already dropped today’s hook.');
+      toast('Already submitted today — one jingle per day');
+      setDialogue('DJ: You already dropped today’s jingle.');
       return;
     }
     if (arm && layerArm !== arm) selectLayer(arm);
@@ -1970,7 +1970,7 @@ async function init(): Promise<void> {
     renderHooks(data.hooks);
     if (player.myHookId) {
       submitted = true;
-      setDialogue('DJ: You already dropped today’s hook. Vote below!');
+      setDialogue('DJ: You already dropped today’s jingle. Vote below!');
       setRecStatus('Already submitted');
     }
   } catch (e) {

@@ -1,6 +1,6 @@
-# Hook of the Day
+# Tunebox
 
-A Reddit Devvit game where players record a short musical hook (drums, keys, bass, and optional vocals), submit it to a daily leaderboard, and vote on other submissions.
+A Reddit Devvit game where players spin up a short jingle (drums, keys, bass, and optional vocals), submit it to a daily leaderboard, and vote on other submissions.
 
 Built with [Devvit Web](https://developers.reddit.com/), Three.js, and the Web Audio API.
 
@@ -9,7 +9,7 @@ Built with [Devvit Web](https://developers.reddit.com/), Three.js, and the Web A
 - **3D studio:** PS1-style desk with drum machine, synth, and tape deck
 - **Touch-friendly compose UI:** mobile console, drum grid, and two-row keyboard (melody + bass)
 - **Multitrack overdub:** record drums, keys, bass, and vox as separate layers, then submit the mix
-- **Daily hooks:** one submission per user per round; vote on today's takes
+- **Daily jingles:** one submission per user per round; vote on today's takes
 - **Local dev:** full game loop with a mock API, no Reddit login required
 
 ## Requirements
@@ -52,7 +52,7 @@ On first upload, the CLI opens a browser link to register the app on Reddit.
 src/
   client/     Game UI, audio engine, 3D studio, touch controls
   server/     Hono API, Redis leaderboard, Reddit post triggers
-  shared/     Hook schema, drum patterns, synth presets
+  shared/     Jingle schema, drum patterns, synth presets
 tools/        Local dev server and Devvit client stub
 ```
 

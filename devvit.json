@@ -20,7 +20,7 @@
   "menu": {
     "items": [
       {
-        "label": "Create a new Hook of the Day post",
+        "label": "Create a new Tunebox post",
         "description": "Name today’s PS1 mystery album sleeve",
         "location": "subreddit",
         "forUserType": "moderator",

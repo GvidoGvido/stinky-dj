@@ -229,7 +229,7 @@ export async function submitHook(roundId: string, username: string, hook: HookDa
 
   const claimed = await redis.hSetNX(byUserKey(roundId), username, hookId);
   if (claimed === 0) {
-    throw new Error('You already submitted a hook for this round');
+    throw new Error('You already submitted a jingle for this round');
   }
 
   const stored: StoredHook = {
