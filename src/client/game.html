@@ -9,26 +9,35 @@
     />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta http-equiv="Permissions-Policy" content="microphone=(self)" />
     <title>Hook of the Day</title>
   </head>
   <body>
     <div id="studio-root"></div>
 
     <div class="ui">
-      <div class="ui-top">
-        <div class="pill" id="mode-pill">HOOK OF THE DAY</div>
-        <div class="ui-top-center">
-          <button type="button" class="tour-toggle" id="tour-toggle">Tour ▾</button>
-          <button type="button" class="help-toggle" id="help-toggle" aria-expanded="false">Help ▾</button>
-          <button type="button" class="panel-toggle console-toggle" id="console-toggle" aria-expanded="false">Console</button>
-          <button type="button" class="panel-toggle drums-toggle" id="drums-toggle" aria-expanded="false">Drums</button>
-          <button type="button" class="panel-toggle keys-toggle" id="keys-toggle" aria-expanded="false">🎹 Keys</button>
+      <div class="ui-header">
+        <div class="ui-top">
+          <div class="ui-top-center">
+            <button type="button" class="tour-toggle" id="tour-toggle">Tour ▾</button>
+            <button type="button" class="help-toggle" id="help-toggle" aria-expanded="false">Help ▾</button>
+            <button type="button" class="panel-toggle console-toggle" id="console-toggle" data-panel-icon="console" aria-expanded="false">
+              <span class="panel-toggle-label">Console</span>
+            </button>
+            <button type="button" class="panel-toggle drums-toggle" id="drums-toggle" data-panel-icon="drums" aria-expanded="false">
+              <span class="panel-toggle-label">Drums</span>
+            </button>
+            <button type="button" class="panel-toggle keys-toggle" id="keys-toggle" data-panel-icon="keys" aria-expanded="false">
+              <span class="panel-toggle-label">Keys</span>
+            </button>
+          </div>
         </div>
-        <div class="pill" id="round-pill">Round</div>
+        <div class="dialogue" id="dialogue">
+          DJ: Drop one hook today — tap REC when you're ready.
+        </div>
       </div>
 
-      <div class="help-panel hidden" id="help-panel">
+      <div class="help-overlay hidden" id="help-overlay" aria-hidden="true">
+      <div class="help-panel" id="help-panel" role="dialog" aria-modal="true">
         <button
           type="button"
           class="help-close-btn"
@@ -40,8 +49,8 @@
         </button>
         <div class="help-section">
           <h3>Mobile</h3>
-          <p>The <strong>3D studio</strong> stays visible up top — you can tap keys there, but for the best experience open the dedicated panels from the top bar: <strong>Console</strong> (mix &amp; mic), <strong>Drums</strong> (step sequencer), and <strong>🎹 Keys</strong> (big touch piano + bass). They’re easier to play and record with than the small 3D keys alone.</p>
-          <p>Tap <strong>✕</strong> on any panel to close it. Expand <strong>Record multitrack</strong> at the bottom to layer drums, keys, bass, and voice.</p>
+          <p>The <strong>3D studio</strong> stays visible up top — you can tap keys there, but for the best experience open the dedicated panels from the top bar: <strong>Console</strong> (mix &amp; FX), <strong>Drums</strong> (step sequencer), and <strong>Keys</strong> (big touch piano + bass). They’re easier to play and record with than the small 3D keys alone.</p>
+          <p>Tap <strong>✕</strong> on any panel to close it. Expand <strong>Record multitrack</strong> at the bottom to layer drums, keys, and bass.</p>
         </div>
         <div class="help-section">
           <h3>Synth (center)</h3>
@@ -57,17 +66,14 @@
           <p>Tap pads to program beats. <strong>KIT</strong> = classic/808/909/lo-fi/electro. <strong>PAT</strong> = presets incl. a snare-roll FILL.</p>
         </div>
         <div class="help-section">
-          <h3>Tape + mic (right)</h3>
-          <p><strong>Record multitrack</strong> (bottom strip): expand to build 1–4 layers. Pick a track, tap <strong>● Record</strong> on that layer only, then <strong>Submit ✓</strong> with however many you’ve got. Or hit the <strong>3D tape deck REC</strong> to capture everything in one go.</p>
+          <h3>Tape deck (right)</h3>
+          <p><strong>Record multitrack</strong> (bottom strip): expand to build up to 3 layers. Pick a track, tap <strong>● Record</strong> on that layer only, then <strong>Submit ✓</strong> with however many you’ve got. Or hit the <strong>3D tape deck REC</strong> to capture everything in one go.</p>
           <p>Hit <strong>Tour</strong> for a guided walkthrough with arrows.</p>
         </div>
       </div>
+      </div>
 
       <div id="reveal-banner" class="reveal hidden"></div>
-
-      <div class="dialogue" id="dialogue">
-        DJ: Drop one hook today — tap REC when you're ready.
-      </div>
 
       <div class="rec-status hidden" id="rec-status">Ready</div>
 
@@ -77,7 +83,7 @@
           <div class="mt-head">
             <button type="button" class="mt-collapse-toggle" id="mt-collapse-toggle" aria-expanded="false" title="Show layer controls">
               <span class="mt-title">Record multitrack</span>
-              <span class="mt-sub" id="mt-loop-label">Tap to expand · up to 4 layers</span>
+              <span class="mt-sub" id="mt-loop-label">Tap to expand · up to 3 layers</span>
             </button>
             <div class="mt-head-actions">
               <button type="button" class="mt-play-loop" id="mt-play-loop" disabled>▶ Play</button>
@@ -94,6 +100,7 @@
             </div>
           </div>
           <div class="mt-collapsed-summary" id="mt-collapsed-summary" aria-hidden="true"></div>
+          <div class="mt-backing-strip hidden" id="mt-backing-strip" aria-label="Backing tracks while you record"></div>
           <div class="mt-expanded-body">
           <div class="mt-layers-wrap">
             <div class="mt-slots" id="mt-slots-grid" role="list"></div>
@@ -104,7 +111,6 @@
               <button type="button" class="mt-arm" data-arm="drums" aria-pressed="false"><span>Drums</span></button>
               <button type="button" class="mt-arm" data-arm="keys" aria-pressed="false"><span>Keys</span></button>
               <button type="button" class="mt-arm" data-arm="bass" aria-pressed="false"><span>Bass</span></button>
-              <button type="button" class="mt-arm" data-arm="vox" aria-pressed="false"><span>Voice</span></button>
             </div>
           </div>
           <div class="mt-actions">
@@ -120,7 +126,6 @@
         </div>
         <div id="compose-toolbar" class="compose-toolbar hidden">
           <button type="button" id="compose-rec" class="compose-rec">● REC</button>
-          <button type="button" id="compose-mic" class="compose-mic" aria-pressed="true">🎤 MIC ON</button>
           <span id="compose-rec-timer" class="compose-rec-timer hidden">0.0s</span>
         </div>
       </div>
@@ -147,9 +152,23 @@
 
       <div id="applause" class="applause hidden" aria-hidden="true">👏👏👏</div>
 
-      <button type="button" class="hooks-toggle" id="hooks-toggle">Today’s hooks ▲</button>
+      <div class="hooks-backdrop hidden" id="hooks-backdrop" aria-hidden="true"></div>
 
-      <div class="hooks-drawer" id="hooks-drawer">
+      <button type="button" class="hooks-toggle" id="hooks-toggle" aria-expanded="false">Today’s hooks ▾</button>
+
+      <div class="hooks-drawer" id="hooks-drawer" aria-hidden="true">
+        <div class="hooks-drawer-head">
+          <span class="hooks-drawer-title">Today’s hooks</span>
+          <button
+            type="button"
+            class="hooks-close-btn"
+            id="hooks-close-btn"
+            aria-label="Close today’s hooks"
+            title="Close"
+          >
+            ✕
+          </button>
+        </div>
         <div id="hooks-list" class="hooks"></div>
       </div>
 

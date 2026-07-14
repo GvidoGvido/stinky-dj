@@ -11,6 +11,8 @@ export type StudioCallbacks = {
   onRecPress: () => void;
   /** Console / drum-machine control: action id + up/down arrow. */
   onCtrl: (action: string, dir: 'up' | 'down') => void;
+  onPatternPlayToggle: () => void;
+  getPatternPlaying: () => boolean;
   getRecordingProgress: () => number;
   isRecording: () => boolean;
   getPattern: () => Record<DrumSound, number[]>;
@@ -24,7 +26,7 @@ export type StudioCallbacks = {
   getEchoLabel: () => string;
   getReverbLabel: () => string;
   getAttackLabel: () => string;
-  getMicLabel: () => string;
+  getDubLabel: () => string;
   getSustainLabel: () => string;
   getLeadVolLabel: () => string;
   getBassVolLabel: () => string;
@@ -151,6 +153,54 @@ function arrowBtn(
   return [btn, plate];
 }
 
+function playToggleBtn(
+  parent: THREE.Group,
+  w: number,
+  h: number,
+  d: number,
+  x: number,
+  y: number,
+  z: number,
+  color: number,
+): { meshes: THREE.Mesh[]; setPlaying: (playing: boolean) => void } {
+  const btn = box(w, h, d, color, x, y, z);
+  parent.add(btn);
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 128;
+  const ctx = c.getContext('2d')!;
+  const draw = (playing: boolean) => {
+    ctx.clearRect(0, 0, 256, 128);
+    ctx.fillStyle = playing ? '#7cff5c' : '#ffffff';
+    ctx.font = 'bold 52px Trebuchet MS, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.shadowColor = 'rgba(0,0,0,0.85)';
+    ctx.shadowBlur = 4;
+    ctx.fillText(playing ? '⏸' : '▶', 128, 68);
+  };
+  draw(false);
+  const plate = new THREE.Mesh(
+    new THREE.PlaneGeometry(w * 0.92, h * 0.88),
+    new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c), transparent: true }),
+  );
+  plate.position.set(x, y, z + d / 2 + 0.002);
+  parent.add(plate);
+  const pick = { kind: 'pat-play' };
+  btn.userData.pick = pick;
+  plate.userData.pick = pick;
+  const matBtn = btn.material as THREE.MeshPhongMaterial;
+  return {
+    meshes: [btn, plate],
+    setPlaying: (playing: boolean) => {
+      draw(playing);
+      (plate.material as THREE.MeshBasicMaterial).map!.needsUpdate = true;
+      matBtn.emissive.setHex(playing ? 0x306830 : 0x203820);
+      matBtn.emissiveIntensity = playing ? 0.55 : 0.12;
+    },
+  };
+}
+
 function ctrlLabel(parent: THREE.Group, w: number, x: number, y: number, z: number, text: string): void {
   const c = document.createElement('canvas');
   c.width = 280;
@@ -227,35 +277,6 @@ function addConsoleGroupBranches(
   for (const x of colXs) {
     parent.add(box(thick, dropH, depth, color, x, (yBar + yEnd) / 2, z));
   }
-}
-
-function makeZzzSprite(scale = 1): THREE.Sprite {
-  const c = document.createElement('canvas');
-  c.width = 128;
-  c.height = 128;
-  const ctx = c.getContext('2d')!;
-  ctx.fillStyle = '#f0f6ff';
-  ctx.font = 'italic bold 84px Trebuchet MS, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.shadowColor = 'rgba(30,50,100,0.6)';
-  ctx.shadowBlur = 8;
-  ctx.fillText(scale > 1.05 ? 'zz' : 'z', 64, 74);
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  const sprite = new THREE.Sprite(
-    new THREE.SpriteMaterial({
-      map: tex,
-      transparent: true,
-      opacity: 0.95,
-      depthWrite: false,
-      depthTest: false,
-    }),
-  );
-  const s = 0.11 * scale;
-  sprite.scale.set(s, s, 1);
-  sprite.renderOrder = 30;
-  return sprite;
 }
 
 function drawFirTree(
@@ -774,12 +795,12 @@ export class Studio3D {
   private reelR!: THREE.Group;
   private vuLeds: THREE.Mesh[] = [];
   private smoke: THREE.Mesh[] = [];
-  private micZzz: THREE.Sprite[] = [];
-  private micWasOff = false;
   // private micBadge!: THREE.Mesh;
   private ember!: THREE.Mesh;
   private synthDisplays: DisplayObj[] = [];
   private drumDisplays: DisplayObj[] = [];
+  private patternPlayBtn: { setPlaying: (playing: boolean) => void } | null = null;
+  private lastPatternPlaying = false;
   private lastSynthTexts: string[] = Array.from({ length: 12 }, () => '');
   private lastDrumTexts = ['', ''];
   private smokeOrigin = new THREE.Vector3();
@@ -1321,7 +1342,7 @@ export class Studio3D {
       { tag: 'ECHO', action: 'echo', col: 0x404858 },
       { tag: 'REV', action: 'rev', col: 0x404858 },
       { tag: 'ATK', action: 'atk', col: 0x404858 },
-      { tag: 'MIC', action: 'mic', col: 0x3a5040 },
+      { tag: 'DUB', action: 'dub', col: 0x3a5040 },
     ];
     const row3: Ctrl[] = [
       { tag: 'KEY VOL', action: 'leadvol', col: 0x5a5030 },
@@ -1446,6 +1467,13 @@ export class Studio3D {
 
     const kitY = fh / 2 - 0.055;
     const kitBtnY = kitY - 0.048;
+
+    const playX = -0.06;
+    ctrlLabel(face, 0.1, playX, kitY + 0.012, 0.038, 'PLAY');
+    const playCtrl = playToggleBtn(face, 0.06, 0.04, 0.014, playX, kitBtnY, 0.037, 0x406840);
+    this.patternPlayBtn = playCtrl;
+    for (const m of playCtrl.meshes) this.interactive.push(m);
+
     ctrlLabel(face, 0.14, 0.1, kitY + 0.012, 0.038, 'KIT');
     const kitDisp = makeDisplay(0.12, 0.03, 0.1, kitBtnY + 0.038, 0.038);
     face.add(kitDisp.mesh);
@@ -1663,14 +1691,6 @@ export class Studio3D {
     head.add(badge);
     // this.micBadge = badge;
 
-    for (let i = 0; i < 5; i++) {
-      const z = makeZzzSprite(0.9 + (i % 2) * 0.22);
-      z.visible = false;
-      z.position.set((Math.random() - 0.5) * 0.04, 0.02 + Math.random() * 0.02, 0.078);
-      head.add(z);
-      this.micZzz.push(z);
-    }
-
     this.scene.add(g);
     this.setAnchor('mic', 0.88, DESK_Y + 0.5, GEAR_Z);
   }
@@ -1807,6 +1827,7 @@ export class Studio3D {
       if (!p) return;
 
       if (p.kind === 'melody-key' || p.kind === 'bass-key') {
+        if (ev.pointerType === 'touch') return;
         ev.preventDefault();
         const ko = this.keys.find((k) => k.mesh === hit.object);
         if (!ko) return;
@@ -1831,6 +1852,10 @@ export class Studio3D {
         this.cb?.onRecPress();
         return;
       }
+      if (p.kind === 'pat-play') {
+        this.cb?.onPatternPlayToggle();
+        return;
+      }
       if (p.kind === 'ctrl') {
         const a = p.action as string;
         const cb = this.cb;
@@ -1843,6 +1868,7 @@ export class Studio3D {
     canvas.addEventListener('pointerdown', handlePointerDown, { passive: false });
 
     canvas.addEventListener('pointermove', (ev) => {
+      if (ev.pointerType === 'touch') return;
       const held = this.touchIds.get(ev.pointerId);
       if (!held || held === 'rec' || !('midi' in held)) return;
       const ko = keyFromPoint(ev.clientX, ev.clientY);
@@ -1852,8 +1878,14 @@ export class Studio3D {
       this.pressKey(ko, ev.pointerId);
     }, { passive: false });
 
-    canvas.addEventListener('pointerup', (ev) => this.releasePointer(ev.pointerId));
-    canvas.addEventListener('pointercancel', (ev) => this.releasePointer(ev.pointerId));
+    canvas.addEventListener('pointerup', (ev) => {
+      if (ev.pointerType === 'touch') return;
+      this.releasePointer(ev.pointerId);
+    });
+    canvas.addEventListener('pointercancel', (ev) => {
+      if (ev.pointerType === 'touch') return;
+      this.releasePointer(ev.pointerId);
+    });
 
     const touchKeyFrom = (touch: Touch): KeyObj | null => keyFromPoint(touch.clientX, touch.clientY);
 
@@ -1877,7 +1909,7 @@ export class Studio3D {
     canvas.addEventListener(
       'touchmove',
       (ev) => {
-        for (const touch of ev.changedTouches) {
+        for (const touch of ev.touches) {
           const id = touch.identifier + 10_000;
           const held = this.touchIds.get(id);
           if (!held || held === 'rec' || !('midi' in held)) continue;
@@ -1982,15 +2014,15 @@ export class Studio3D {
     if (this.touchIds.get(id) === ko) return;
 
     const alreadyHeld = ko.down;
-    ko.down = true;
-    ko.mesh.position.y = ko.restY - 0.008;
-    (ko.mesh.material as THREE.MeshPhongMaterial).emissive.setHex(ko.layer === 'bass' ? 0x804010 : 0x666620);
-    (ko.mesh.material as THREE.MeshPhongMaterial).emissiveIntensity = 0.5;
-    this.touchIds.set(id, ko);
     if (!alreadyHeld) {
-      const source = this.noteSourceForId(id);
-      this.cb?.onNoteDown(ko.midi, source, id, ko.layer);
+      ko.down = true;
+      ko.mesh.position.y = ko.restY - 0.008;
+      (ko.mesh.material as THREE.MeshPhongMaterial).emissive.setHex(ko.layer === 'bass' ? 0x804010 : 0x666620);
+      (ko.mesh.material as THREE.MeshPhongMaterial).emissiveIntensity = 0.5;
     }
+    this.touchIds.set(id, ko);
+    const source = this.noteSourceForId(id);
+    this.cb?.onNoteDown(ko.midi, source, id, ko.layer);
   }
 
   private releaseKey(ko: KeyObj, id: number): void {
@@ -2065,28 +2097,6 @@ export class Studio3D {
       }
     }
 
-    const micOff = this.cb?.getMicLabel() === 'OFF';
-    const zBaseY = 0.02;
-    const zBaseZ = 0.078;
-    if (micOff && !this.micWasOff) {
-      for (const z of this.micZzz) {
-        z.position.set((Math.random() - 0.5) * 0.045, zBaseY + Math.random() * 0.02, zBaseZ + Math.random() * 0.012);
-      }
-    }
-    this.micWasOff = micOff;
-    for (const z of this.micZzz) {
-      z.visible = micOff;
-      if (!micOff) continue;
-      z.position.y += 0.0015;
-      z.position.x += Math.sin(t * 0.65 + z.id) * 0.0007;
-      const mat = z.material as THREE.SpriteMaterial;
-      const dy = z.position.y - zBaseY;
-      mat.opacity = Math.max(0.35, 0.92 - dy * 2.1);
-      if (dy > 0.14) {
-        z.position.set((Math.random() - 0.5) * 0.045, zBaseY + Math.random() * 0.015, zBaseZ + Math.random() * 0.012);
-      }
-    }
-
     const pat = this.cb?.getPattern();
     const hi = this.cb?.getStepHighlight() ?? -1;
     if (pat) {
@@ -2102,7 +2112,7 @@ export class Studio3D {
     if (cb) {
       const synthTexts = [
         cb.getPresetLabel(), cb.getBassLabel(), cb.getBpmLabel(), cb.getDrumsLabel(),
-        cb.getEchoLabel(), cb.getReverbLabel(), cb.getAttackLabel(), cb.getMicLabel(),
+        cb.getEchoLabel(), cb.getReverbLabel(), cb.getAttackLabel(), cb.getDubLabel(),
         cb.getLeadVolLabel(), cb.getBassVolLabel(), cb.getDrumVolLabel(), cb.getSustainLabel(),
       ];
       const synthColors = [
@@ -2122,6 +2132,11 @@ export class Studio3D {
           updateDisplay(this.drumDisplays[i]!, drumTexts[i]!, '#ffa040');
           this.lastDrumTexts[i] = drumTexts[i]!;
         }
+      }
+      const patternPlaying = cb.getPatternPlaying();
+      if (patternPlaying !== this.lastPatternPlaying) {
+        this.patternPlayBtn?.setPlaying(patternPlaying);
+        this.lastPatternPlaying = patternPlaying;
       }
     }
 

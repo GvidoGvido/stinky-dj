@@ -6,10 +6,12 @@ export type TouchDrumsOptions = {
   container: HTMLElement;
   onStepToggle: (sound: DrumSound, step: number) => void;
   onCtrl: (action: string, dir: 'up' | 'down') => void;
+  onPatternPlayToggle: () => void;
   getKitLabel: () => string;
   getPatLabel: () => string;
   getPattern: () => Record<DrumSound, number[]>;
   getStepHighlight: () => number;
+  getPatternPlaying: () => boolean;
   onClose?: () => void;
 };
 
@@ -44,10 +46,17 @@ export function mountTouchDrums(opts: TouchDrumsOptions): {
         <button type="button" class="tc-arr" data-dir="down">▼</button>
       </div>
     </div>
+    <button type="button" class="td-play-btn" data-play-btn aria-label="Play pattern">▶ Play pattern</button>
     <div class="td-grid"></div>
   `;
 
   const grid = container.querySelector<HTMLElement>('.td-grid')!;
+  const playBtn = container.querySelector<HTMLButtonElement>('[data-play-btn]')!;
+  playBtn.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    opts.onPatternPlayToggle();
+    refresh();
+  });
   container.querySelector<HTMLElement>('.tp-close')!.addEventListener('click', () => opts.onClose?.());
   const padEls: HTMLElement[][] = [];
 
@@ -95,8 +104,12 @@ export function mountTouchDrums(opts: TouchDrumsOptions): {
   function refresh(): void {
     const pat = opts.getPattern();
     const hi = opts.getStepHighlight();
+    const playing = opts.getPatternPlaying();
     container.querySelector('[data-kit-val]')!.textContent = opts.getKitLabel();
     container.querySelector('[data-pat-val]')!.textContent = opts.getPatLabel();
+    playBtn.textContent = playing ? '⏸ Pause pattern' : '▶ Play pattern';
+    playBtn.setAttribute('aria-label', playing ? 'Pause pattern' : 'Play pattern');
+    playBtn.classList.toggle('playing', playing);
     for (let row = 0; row < 4; row++) {
       const sound = SOUNDS[row]!;
       for (let col = 0; col < STEPS; col++) {

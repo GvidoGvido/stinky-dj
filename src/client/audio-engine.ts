@@ -10,165 +10,6 @@ function nowSec(ctx: AudioContext): number {
 }
 
 const DEFAULT_MIX: MixSettings = { echo: 0.22, reverb: 0.18, attack: 0.35, vox: 0.55 };
-const VOICE_REC_BITRATE = 192_000;
-
-function pickVoiceMime(): string {
-  for (const mime of ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/webm']) {
-    if (MediaRecorder.isTypeSupported(mime)) return mime;
-  }
-  return 'audio/webm';
-}
-
-export class VoiceRecorder {
-  private stream: MediaStream | null = null;
-  private recorder: MediaRecorder | null = null;
-  private chunks: Blob[] = [];
-  private tapDest: MediaStreamAudioDestinationNode | null = null;
-  private tapNodes: AudioNode[] = [];
-  private probeResult: boolean | null = null;
-
-  constructor(private getCtx: () => AudioContext) {}
-
-  get active(): boolean {
-    return this.recorder?.state === 'recording';
-  }
-
-  /** Lightweight check — does not leave recording armed. */
-  async probe(): Promise<boolean> {
-    if (this.probeResult !== null) return this.probeResult;
-    if (!navigator.mediaDevices?.getUserMedia) {
-      this.probeResult = false;
-      return false;
-    }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach((t) => t.stop());
-      this.probeResult = true;
-      return true;
-    } catch {
-      this.probeResult = false;
-      return false;
-    }
-  }
-
-  static micUnavailableMessage(): string {
-    let embedded = false;
-    try {
-      embedded = window.self !== window.top;
-    } catch {
-      embedded = true;
-    }
-    if (embedded) {
-      return 'Microphone is blocked inside the Reddit app. Voice works in local dev (npm run local) — Reddit iframes may not allow mic yet.';
-    }
-    return 'Microphone blocked — check browser permissions and try again.';
-  }
-
-  async start(): Promise<boolean> {
-    if (!navigator.mediaDevices?.getUserMedia) return false;
-    try {
-      this.stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-          channelCount: 1,
-          sampleRate: { ideal: 48000 },
-        },
-      });
-      this.probeResult = true;
-      const ctx = this.getCtx();
-      const source = ctx.createMediaStreamSource(this.stream);
-      const hpf = ctx.createBiquadFilter();
-      hpf.type = 'highpass';
-      hpf.frequency.value = 72;
-      hpf.Q.value = 0.7;
-      const presence = ctx.createBiquadFilter();
-      presence.type = 'peaking';
-      presence.frequency.value = 3200;
-      presence.Q.value = 0.9;
-      presence.gain.value = 2.2;
-      const comp = ctx.createDynamicsCompressor();
-      comp.threshold.value = -22;
-      comp.knee.value = 8;
-      comp.ratio.value = 2.4;
-      comp.attack.value = 0.006;
-      comp.release.value = 0.14;
-      this.tapDest = ctx.createMediaStreamDestination();
-      source.connect(hpf);
-      hpf.connect(presence);
-      presence.connect(comp);
-      comp.connect(this.tapDest);
-      this.tapNodes = [source, hpf, presence, comp];
-
-      const mime = pickVoiceMime();
-      this.recorder = new MediaRecorder(this.tapDest.stream, {
-        mimeType: mime,
-        audioBitsPerSecond: VOICE_REC_BITRATE,
-      });
-      this.chunks = [];
-      this.recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) this.chunks.push(e.data);
-      };
-      this.recorder.start(250);
-      return true;
-    } catch {
-      this.probeResult = false;
-      this.cleanup();
-      return false;
-    }
-  }
-
-  async stop(): Promise<VoiceTrack | null> {
-    const rec = this.recorder;
-    if (!rec || rec.state === 'inactive') {
-      this.cleanup();
-      return null;
-    }
-    return new Promise((resolve) => {
-      rec.onstop = async () => {
-        const blob = new Blob(this.chunks, { type: rec.mimeType || 'audio/webm' });
-        this.cleanup();
-        if (blob.size < 200) {
-          resolve(null);
-          return;
-        }
-        const b64 = await blobToBase64(blob);
-        resolve({ data: b64, mime: blob.type || 'audio/webm' });
-      };
-      try {
-        rec.requestData();
-      } catch {
-        /* ignore */
-      }
-      rec.stop();
-    });
-  }
-
-  private cleanup(): void {
-    for (const node of this.tapNodes) {
-      try {
-        node.disconnect();
-      } catch {
-        /* already disconnected */
-      }
-    }
-    this.tapNodes = [];
-    this.tapDest = null;
-    this.stream?.getTracks().forEach((t) => t.stop());
-    this.stream = null;
-    this.recorder = null;
-    this.chunks = [];
-  }
-}
-
-async function blobToBase64(blob: Blob): Promise<string> {
-  const buf = await blob.arrayBuffer();
-  const bytes = new Uint8Array(buf);
-  let bin = '';
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]!);
-  return btoa(bin);
-}
 
 export class AudioEngine {
   private ctx: AudioContext | null = null;
@@ -556,6 +397,40 @@ export class AudioEngine {
     masterGain: number;
   } | null = null;
 
+  /** Silence scheduled hook/monitor playback without tearing down mix state (pause). */
+  mutePlaybackStems(): void {
+    const ctx = this.ensure();
+    const t = ctx.currentTime;
+    for (const bus of [this.synthBus, this.bassBus, this.drumBus, this.voiceBus]) {
+      if (!bus) continue;
+      bus.gain.cancelScheduledValues(t);
+      bus.gain.setValueAtTime(0, t);
+    }
+  }
+
+  /** Restore stem levels after pauseHookPlayback. */
+  unmutePlaybackStems(): void {
+    const ctx = this.ensure();
+    const t = ctx.currentTime;
+    const gains = this.playbackGainRestore;
+    if (this.synthBus) {
+      this.synthBus.gain.cancelScheduledValues(t);
+      this.synthBus.gain.setValueAtTime(gains?.lead ?? this.synthBus.gain.value, t);
+    }
+    if (this.bassBus) {
+      this.bassBus.gain.cancelScheduledValues(t);
+      this.bassBus.gain.setValueAtTime(gains?.bass ?? this.bassBus.gain.value, t);
+    }
+    if (this.drumBus) {
+      this.drumBus.gain.cancelScheduledValues(t);
+      this.drumBus.gain.setValueAtTime(gains?.drum ?? this.drumBus.gain.value, t);
+    }
+    if (this.voiceBus && this.playbackVoiceGainRestore !== null) {
+      this.voiceBus.gain.cancelScheduledValues(t);
+      this.voiceBus.gain.setValueAtTime(this.playbackVoiceGainRestore, t);
+    }
+  }
+
   /** Restore live stem levels after review/monitor playback or an abort. */
   restoreLiveStemGains(lead: number, bass: number, drum: number): void {
     if (this.synthBus) this.synthBus.gain.value = clamp(lead, 0, 1);
@@ -741,7 +616,7 @@ export class AudioEngine {
   }
 
   /** Dry instrument monitoring while recording — no delay/reverb on keys/bass. */
-  beginRecordingMonitor(withVoice = false): void {
+  beginRecordingMonitor(): void {
     if (this.recordingMonitorRestore) return;
     this.noteOffAll();
     this.flushFxTails();
@@ -759,8 +634,7 @@ export class AudioEngine {
     if (this.synthFxSend) this.synthFxSend.gain.value = 0;
     if (this.bassFxSend) this.bassFxSend.gain.value = 0;
     if (this.drumFxSend) this.drumFxSend.gain.value = 0;
-    // Quiet speakers when mic is capturing — stops bleed doubling on playback.
-    if (this.master) this.master.gain.value = withVoice ? 0.34 : 0.68;
+    if (this.master) this.master.gain.value = 0.68;
   }
 
   endRecordingMonitor(): void {

@@ -10,11 +10,9 @@ export type TourStop = {
 export const TOUR_STOPS: TourStop[] = [
   { id: 'drums', anchor: 'drums', label: 'Drum machine', detail: 'Tap pads to program beats. KIT = sound style. PAT = preset patterns.' },
   { id: 'synth', anchor: 'synth', label: 'Synth / keys', detail: 'Play melody (A–K) and bass (1–0). SYN cycles piano, guitar, sax & more.' },
-  { id: 'console', anchor: 'console', label: 'Mixer console', detail: 'ECHO, REV, ATK shape the sound. MIC toggles voice. VOL row sets keys / bass / drums levels.' },
+  { id: 'console', anchor: 'console', label: 'Mixer console', detail: 'ECHO, REV, ATK shape the sound. DUB toggles multitrack mode. VOL row sets keys / bass / drums levels.' },
   { id: 'tape', anchor: 'tape', label: 'Tape deck', detail: 'Tap REC to record (reels spin while taping). Tap again to stop — then play back, delete, or submit.' },
-  { id: 'mic', anchor: 'mic', label: 'Microphone', detail: 'Sing or hum when MIC is on. Mic off = little z’s float up — it’s napping.' },
-  { id: 'beer', anchor: 'beer', label: 'Refreshments', detail: 'Studio vibes. Not interactive — just atmosphere.' },
-  { id: 'smoke', anchor: 'smoke', label: 'Ashtray', detail: 'Fuming cigarette. Pure mood.' },
+  { id: 'mic', anchor: 'mic', label: 'Microphone', detail: 'Vintage desk mic on the right — pure studio atmosphere, not wired up.' },
 ];
 
 export function mountTour(

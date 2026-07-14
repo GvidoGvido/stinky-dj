@@ -2,13 +2,13 @@ import type { DrumHitEvent, HookData, NoteEvent, VoiceTrack } from '../shared/ap
 import type { InstrumentTake } from './hook-recorder';
 import { layerIconHtml, mountLayerArmIcons } from './layer-icons';
 
-export type LayerArm = 'drums' | 'keys' | 'bass' | 'vox';
+export type LayerArm = 'drums' | 'keys' | 'bass';
 
-export type LayerKind = LayerArm | 'mix';
+export type LayerKind = LayerArm | 'mix' | 'vox';
 
-export const MAX_TRACK_LAYERS = 4;
+export const MAX_TRACK_LAYERS = 3;
 
-export const TRACK_SLOTS: LayerArm[] = ['drums', 'keys', 'bass', 'vox'];
+export const TRACK_SLOTS: LayerArm[] = ['drums', 'keys', 'bass'];
 
 export type RecordedLayer = {
   id: string;
@@ -77,14 +77,7 @@ export function sessionMaxEventSec(session: MultitrackSession): number {
   return maxT;
 }
 
-export function classifyLayer(
-  pass: InstrumentTake,
-  voice: VoiceTrack | undefined,
-  arm: LayerArm,
-): LayerKind {
-  if (voice && pass.notes.length === 0 && pass.bassNotes.length === 0 && pass.drumHits.length === 0) {
-    return 'vox';
-  }
+export function classifyLayer(pass: InstrumentTake, arm: LayerArm): LayerKind {
   const hasKeys = pass.notes.length > 0;
   const hasBass = pass.bassNotes.length > 0;
   const hasDrums = pass.drumHits.length > 0 || arm === 'drums';
@@ -94,7 +87,6 @@ export function classifyLayer(
     if (hasKeys) return 'keys';
     if (hasBass) return 'bass';
   }
-  if (typeCount === 0 && voice) return 'vox';
   return typeCount > 1 ? 'mix' : arm;
 }
 
@@ -128,15 +120,23 @@ function layerSummary(layer: RecordedLayer): string {
       bits.push('drums');
     }
   }
-  if (layer.voice) bits.push('voice');
+  if (layer.voice) bits.push('legacy voice');
   return bits.length ? bits.join(' · ') : `${layer.durationSec.toFixed(1)}s`;
 }
+
+export type BackingTrackChip = {
+  arm: LayerArm;
+  trackNum: number;
+  label: string;
+  status: 'playing' | 'paused' | 'muted' | 'idle';
+};
 
 export type MultitrackPanelOptions = {
   root: HTMLElement;
   loopLabel: HTMLElement;
   collapsedSummary: HTMLElement;
   collapseToggle: HTMLButtonElement;
+  backingStrip: HTMLElement;
   slotsGrid: HTMLElement;
   armRow: HTMLElement;
   submitBtn: HTMLButtonElement;
@@ -150,6 +150,7 @@ export type MultitrackPanelOptions = {
   onReRecord: (arm: LayerArm) => void;
   onRemoveLayer: (id: string) => void;
   onPreviewLayer: (arm: LayerArm) => void;
+  onToggleBackingMute: (arm: LayerArm) => void;
   onToggleExpanded: () => void;
 };
 
@@ -168,6 +169,8 @@ export function mountMultitrackPanel(opts: MultitrackPanelOptions): {
     previewPlayingArm: LayerArm | null;
     previewPausedArm: LayerArm | null;
     canSubmit: boolean;
+    backingTracks: BackingTrackChip[];
+    showBackingStrip: boolean;
   }) => void;
 } {
   const {
@@ -175,6 +178,7 @@ export function mountMultitrackPanel(opts: MultitrackPanelOptions): {
     loopLabel,
     collapsedSummary,
     collapseToggle,
+    backingStrip,
     slotsGrid,
     armRow,
     submitBtn,
@@ -234,6 +238,8 @@ export function mountMultitrackPanel(opts: MultitrackPanelOptions): {
     previewPlayingArm: LayerArm | null;
     previewPausedArm: LayerArm | null;
     canSubmit: boolean;
+    backingTracks: BackingTrackChip[];
+    showBackingStrip: boolean;
   }): void {
     const {
       session,
@@ -248,6 +254,8 @@ export function mountMultitrackPanel(opts: MultitrackPanelOptions): {
       previewPlayingArm,
       previewPausedArm,
       canSubmit,
+      backingTracks,
+      showBackingStrip,
     } = args;
 
     root.classList.toggle('recording', recording);
@@ -275,9 +283,8 @@ export function mountMultitrackPanel(opts: MultitrackPanelOptions): {
     submitBtn.classList.toggle('hidden', !canSubmit);
     submitBtn.disabled = !canSubmit || recording;
 
-    const backingCount = session
-      ? session.layers.filter((l) => l.kind !== 'mix' && !(recording && l.kind === arm)).length
-      : 0;
+    const backingCount = backingTracks.length;
+    const audibleBackingCount = backingTracks.filter((t) => t.status !== 'muted').length;
 
     if (loopPlaying && !loopPaused) {
       playLoopBtn.textContent = '⏸ Pause';
@@ -292,29 +299,114 @@ export function mountMultitrackPanel(opts: MultitrackPanelOptions): {
     } else {
       playLoopBtn.textContent = '▶ Play';
       playLoopBtn.dataset.playing = 'false';
-      playLoopBtn.disabled = backingCount === 0;
+      playLoopBtn.disabled = audibleBackingCount === 0;
       playLoopBtn.setAttribute('aria-label', recording ? 'Play backing tracks while recording' : 'Play all recorded layers');
     }
 
     const filledCount = session?.layers.length ?? 0;
     if (recording) {
-      loopLabel.textContent = `● Recording ${LAYER_META[arm].label} · ${recordSec.toFixed(1)}s`;
+      const mutedCount = backingTracks.filter((t) => t.status === 'muted').length;
+      loopLabel.textContent =
+        backingCount > 0
+          ? mutedCount > 0
+            ? `● Recording ${LAYER_META[arm].label} · ${recordSec.toFixed(1)}s · ${audibleBackingCount}/${backingCount} backing`
+            : `● Recording ${LAYER_META[arm].label} · ${recordSec.toFixed(1)}s · ${backingCount} backing`
+          : `● Recording ${LAYER_META[arm].label} · ${recordSec.toFixed(1)}s`;
     } else if (!expanded) {
       loopLabel.textContent =
         filledCount > 0
           ? `${filledCount} layer${filledCount === 1 ? '' : 's'} recorded · tap to expand`
-          : 'Tap to expand · up to 4 layers';
+          : 'Tap to expand · up to 3 layers';
     } else if (!session || filledCount === 0) {
-      loopLabel.textContent = 'Choose a layer, then tap ● Record on that track';
+      loopLabel.textContent = 'Choose a layer, then tap ● Record · ▶ Play hears all layers together';
     } else {
       loopLabel.textContent = `${filledCount}/${MAX_TRACK_LAYERS} layers · ${session.loopSec.toFixed(1)}s total`;
     }
     renderCollapsedSummary(session);
 
+    const renderBackingStrip = (): void => {
+      backingStrip.classList.toggle('hidden', !showBackingStrip || backingTracks.length === 0);
+      backingStrip.innerHTML = '';
+      if (!showBackingStrip || backingTracks.length === 0) return;
+
+      const head = document.createElement('div');
+      head.className = 'mt-backing-head';
+      const title = document.createElement('div');
+      title.className = 'mt-backing-title';
+      title.textContent = recording ? 'Backing while you record' : 'Layer mix';
+      const hint = document.createElement('div');
+      hint.className = 'mt-backing-hint';
+      hint.textContent = recording ? '⏸ mutes from the mix' : 'Per-track mute';
+      head.appendChild(title);
+      head.appendChild(hint);
+      backingStrip.appendChild(head);
+
+      const chips = document.createElement('div');
+      chips.className = 'mt-backing-chips';
+      for (const track of backingTracks) {
+        const chip = document.createElement('div');
+        chip.className = `mt-backing-chip ${track.status}`;
+        chip.dataset.arm = track.arm;
+
+        const num = document.createElement('span');
+        num.className = 'mt-backing-chip-num';
+        num.textContent = `Track ${track.trackNum}`;
+
+        const label = document.createElement('span');
+        label.className = 'mt-backing-chip-label';
+        label.textContent = track.label;
+
+        const status = document.createElement('span');
+        status.className = 'mt-backing-chip-status';
+        status.textContent =
+          track.status === 'playing'
+            ? 'Playing'
+            : track.status === 'paused'
+              ? 'Paused'
+              : track.status === 'muted'
+                ? 'Muted'
+                : 'Ready';
+
+        const muteBtn = document.createElement('button');
+        muteBtn.type = 'button';
+        muteBtn.className = 'mt-backing-chip-btn';
+        if (track.status === 'muted') {
+          muteBtn.textContent = '▶';
+          muteBtn.title = `Unmute ${track.label}`;
+          muteBtn.setAttribute('aria-label', `Unmute ${track.label} in the mix`);
+        } else {
+          muteBtn.textContent = '⏸';
+          muteBtn.title = `Mute ${track.label} from the mix`;
+          muteBtn.setAttribute('aria-label', `Mute ${track.label} from the mix`);
+        }
+        muteBtn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          opts.onToggleBackingMute(track.arm);
+        });
+
+        chip.appendChild(num);
+        chip.appendChild(label);
+        chip.appendChild(status);
+        chip.appendChild(muteBtn);
+        chips.appendChild(chip);
+      }
+      backingStrip.appendChild(chips);
+    };
+
+    const compactBacking = recording && showBackingStrip && backingTracks.length > 0;
+
     if (!expanded) {
       slotsGrid.innerHTML = '';
+      if (compactBacking) {
+        renderBackingStrip();
+      } else {
+        backingStrip.classList.add('hidden');
+        backingStrip.innerHTML = '';
+      }
       return;
     }
+
+    renderBackingStrip();
 
     slotsGrid.innerHTML = '';
     for (const slotArm of TRACK_SLOTS) {
@@ -389,7 +481,7 @@ export function mountMultitrackPanel(opts: MultitrackPanelOptions): {
         remove.textContent = '✕';
         remove.title = 'Remove this layer';
         remove.setAttribute('aria-label', `Remove ${meta.label}`);
-        remove.disabled = recording;
+        remove.disabled = isRecordingNow;
         remove.addEventListener('click', (ev) => {
           ev.stopPropagation();
           opts.onRemoveLayer(layer.id);

@@ -29,13 +29,14 @@ import {
   prevDrumPattern,
   type DrumPatternName,
 } from '../shared/drum-patterns';
-import { AudioEngine, VoiceRecorder } from './audio-engine';
+import { AudioEngine } from './audio-engine';
 import { closeComposeInstruments, openComposeArm, type ComposePanelMounts } from './compose-panels';
 import { Studio3D, type NoteSource } from './studio-3d';
 import { mountTour } from './studio-tour';
 import { mountTouchKeys } from './touch-keys';
 import { mountTouchDrums } from './touch-drums';
 import { mountTouchConsole } from './touch-console';
+import { mountPanelToggleIcons } from './panel-icons';
 import { HookRecorder, type InstrumentTake } from './hook-recorder';
 import {
   classifyLayer,
@@ -45,6 +46,7 @@ import {
   MAX_TRACK_LAYERS,
   mountMultitrackPanel,
   sessionMaxEventSec,
+  type BackingTrackChip,
   type LayerArm,
   type MultitrackSession,
   type RecordedLayer,
@@ -174,14 +176,17 @@ function toast(msg: string): void {
 }
 
 async function init(): Promise<void> {
-  const roundPill = el<HTMLDivElement>('round-pill');
+  mountPanelToggleIcons();
   const dialogue = el<HTMLDivElement>('dialogue');
   const recStatus = el<HTMLDivElement>('rec-status');
   const applauseEl = el<HTMLDivElement>('applause');
   const hooksListEl = el<HTMLDivElement>('hooks-list');
   const hooksToggle = el<HTMLButtonElement>('hooks-toggle');
+  const hooksBackdrop = el<HTMLDivElement>('hooks-backdrop');
+  const hooksCloseBtn = el<HTMLButtonElement>('hooks-close-btn');
   const helpToggle = el<HTMLButtonElement>('help-toggle');
   const tourToggle = el<HTMLButtonElement>('tour-toggle');
+  const helpOverlay = el<HTMLDivElement>('help-overlay');
   const helpPanel = el<HTMLDivElement>('help-panel');
   const tourOverlay = el<HTMLDivElement>('tour-overlay');
   const gearSynth = el<HTMLParagraphElement>('gear-synth');
@@ -191,7 +196,6 @@ async function init(): Promise<void> {
   studio.start();
 
   const audio = new AudioEngine();
-  const voiceRec = new VoiceRecorder(() => audio.ensure());
   audio.setVibe(0.78);
 
   let player: PlayerState | null = null;
@@ -206,7 +210,8 @@ async function init(): Promise<void> {
   const detune = 0;
   const tone = 0.65;
   let drumsOn = true;
-  let micOn = true;
+  /** User pressed ▶ on the drum machine — loop the current step pattern (preset or hand-drawn). */
+  let patternPreviewPlaying = false;
   let sustainOn = false;
   const swing = 0;
   let submitted = false;
@@ -235,7 +240,7 @@ async function init(): Promise<void> {
   let recMaxTimer: number | null = null;
   let recordElapsedSec = 0;
   let nextVoiceId = 0;
-  const activeVoices = new Map<string, { voiceId: number; autoOff?: number }>();
+  const activeVoices = new Map<string, { voiceId: number }>();
 
   type HookPlaybackSession = {
     hook: HookData;
@@ -257,23 +262,36 @@ async function init(): Promise<void> {
   const reviewPlayBtn = el<HTMLButtonElement>('review-play');
 
   let mtSession: MultitrackSessionLocal | null = null;
-  let overdubOn = true;
+  let overdubOn = !window.matchMedia('(pointer: coarse)').matches;
   let layerArm: LayerArm = 'drums';
   let overdubLoopActive = false;
   let overdubLoopPlaying = false;
   let reRecordArm: LayerArm | null = null;
+  /** Layers muted from the auto-backing / mix loop (per-track ⏸ in the backing strip). */
+  const backingMutedArms = new Set<LayerArm>();
   let mtPanelExpanded = false;
   let nextLayerId = 1;
   let multitrackPanel: ReturnType<typeof mountMultitrackPanel> | null = null;
   /** Studio tape REC = capture everything at once; layer REC = one multitrack slot. */
   let fullTakeRecording = false;
 
-  const SHORT_NOTE_SEC = 0.22;
   let recTimeAnchor = 0;
   let recordingInstruments = false;
   const hookRecorder = new HookRecorder(() =>
     recordingInstruments ? Math.max(0, audio.ensure().currentTime - recTimeAnchor) : 0,
   );
+  const isCoarsePointer = window.matchMedia('(pointer: coarse)').matches;
+  const DJ_WELCOME = 'DJ: Drop one hook today — tap REC when you\'re ready.';
+
+  /** Desktop-only DJ banner; on mobile use rec-status + toasts instead. */
+  function setDialogue(text: string): void {
+    dialogue.textContent = text;
+    const hide = isCoarsePointer || text === DJ_WELCOME;
+    dialogue.classList.toggle('hidden', hide);
+    if (!isCoarsePointer) return;
+    if (text === DJ_WELCOME || hookRecorder.active) return;
+    toast(text.replace(/^DJ:\s*/, ''));
+  }
 
   function shouldRecordLayer(layer: 'melody' | 'bass'): boolean {
     if (!hookRecorder.active) return false;
@@ -319,10 +337,6 @@ async function init(): Promise<void> {
     return emptyDrumPattern();
   }
 
-  function shouldRecordVoice(): boolean {
-    if (fullTakeRecording || !overdubOn) return micOn;
-    return layerArm === 'vox';
-  }
 
   /** Capture sequencer hits during drums-layer and full-take recording. */
   function shouldCaptureTransportDrums(): boolean {
@@ -382,20 +396,29 @@ async function init(): Promise<void> {
   }
 
   function buildHookFromLayer(session: MultitrackSessionLocal, layer: RecordedLayer): HookData {
+    const drumPattern = drumPatternForLayer(session, layer);
+    const drum: HookData['drum'] = {
+      swing,
+      pattern: drumPattern,
+      gain: drumGain,
+      kit: drumKit,
+    };
+    if (
+      layer.drumHits.length &&
+      !patternHasSteps({ pattern: drumPattern, swing, gain: drumGain, kit: drumKit })
+    ) {
+      drum.hits = layer.drumHits;
+    }
     return {
       bpm,
       stepsPerBar,
       bars,
       synth: { preset, detune, tone, gain: leadGain },
       bass: { preset: bassPreset, gain: bassGain, notes: layer.bassNotes },
-      drum: {
-        swing,
-        pattern: drumPatternForLayer(session, layer),
-        gain: drumGain,
-        kit: drumKit,
-      },
+      drum,
       mix,
       notes: layer.notes,
+      recordedSec: layer.durationSec,
       ...(layer.voice ? { voice: layer.voice } : {}),
     };
   }
@@ -444,9 +467,11 @@ async function init(): Promise<void> {
       isOverdubMonitor: false,
       previewArm: arm,
     });
-    dialogue.textContent = hookRecorder.active
-      ? `DJ: Backing — ${layerArmLabel(arm)}. Keep recording your ${layerArmLabel(layerArm).toLowerCase()} take.`
-      : `DJ: Playing ${layerArmLabel(arm)} — tap ⏸ to pause.`;
+    setDialogue(
+      hookRecorder.active
+        ? `DJ: Backing — ${layerArmLabel(arm)}. Keep recording your ${layerArmLabel(layerArm).toLowerCase()} take.`
+        : `DJ: Playing ${layerArmLabel(arm)} — tap ⏸ to pause.`,
+    );
   }
 
   function layerFlowHint(arm: LayerArm, hasTake: boolean): string {
@@ -455,11 +480,41 @@ async function init(): Promise<void> {
     }
     return `DJ: ${layerArmLabel(arm)} selected — tap ● Record on that track when ready.`;
   }
-  function buildHookFromSessionExcluding(session: MultitrackSessionLocal, exclude: LayerArm): HookData {
-    return buildHookFromSession({
-      ...session,
-      layers: session.layers.filter((l) => l.kind !== exclude),
+  function buildHookForOverdub(): HookData | null {
+    if (!mtSession) return null;
+    const excludeArm = hookRecorder.active && !fullTakeRecording ? layerArm : undefined;
+    const layers = mtSession.layers.filter((l) => {
+      if (l.kind === 'mix') return false;
+      if (excludeArm && l.kind === excludeArm) return false;
+      if (backingMutedArms.has(l.kind as LayerArm)) return false;
+      return true;
     });
+    if (layers.length === 0) return null;
+    return buildHookFromSession({ ...mtSession, layers });
+  }
+
+  function backingTracksForUi(): BackingTrackChip[] {
+    if (!mtSession) return [];
+    const recording = hookRecorder.active && !fullTakeRecording;
+    const excludeArm = recording ? layerArm : undefined;
+    const mixActive = overdubLoopPlaying && !!hookPlayback?.isOverdubMonitor;
+    const mixPaused = mixActive && hookPlayback!.pausedAt !== null;
+    const chips: BackingTrackChip[] = [];
+    let trackNum = 0;
+    for (const layer of mtSession.layers) {
+      if (layer.kind === 'mix') continue;
+      const arm = layer.kind as LayerArm;
+      if (excludeArm && arm === excludeArm) continue;
+      trackNum += 1;
+      const muted = backingMutedArms.has(arm);
+      let status: BackingTrackChip['status'];
+      if (muted) status = 'muted';
+      else if (mixActive && !mixPaused) status = 'playing';
+      else if (mixActive && mixPaused) status = 'paused';
+      else status = 'idle';
+      chips.push({ arm, trackNum, label: layerArmLabel(arm), status });
+    }
+    return chips;
   }
 
   function buildHookFromSession(session: MultitrackSessionLocal): HookData {
@@ -490,12 +545,8 @@ async function init(): Promise<void> {
     };
   }
 
-  function createLayerFromPass(
-    pass: InstrumentTake,
-    passSec: number,
-    voice?: HookData['voice'],
-  ): RecordedLayer {
-    const kind = classifyLayer(pass, voice, layerArm);
+  function createLayerFromPass(pass: InstrumentTake, passSec: number): RecordedLayer {
+    const kind = classifyLayer(pass, layerArm);
     const snap = snapshotPatternCopy();
     const snapHasSteps = patternHasSteps({
       pattern: snap,
@@ -517,7 +568,6 @@ async function init(): Promise<void> {
       drumHits: [...pass.drumHits],
       ...(drumPattern ? { drumPattern } : {}),
       durationSec: passSec,
-      ...(voice ? { voice } : {}),
     };
   }
 
@@ -559,8 +609,17 @@ async function init(): Promise<void> {
     return true;
   }
 
+  function multitrackPanelVisible(): boolean {
+    return overdubOn || !!mtSession || mtPanelExpanded || isCoarsePointer;
+  }
+
+  function useMultitrackLayerPicker(): boolean {
+    return mtPanelExpanded && (overdubOn || isCoarsePointer);
+  }
+
   function renderMultitrackPanel(): void {
-    const show = overdubOn;
+    const show = multitrackPanelVisible();
+    const backingTracks = backingTracksForUi();
     multitrackPanel?.setVisible(show);
     multitrackPanel?.render({
       session: mtSession,
@@ -575,12 +634,15 @@ async function init(): Promise<void> {
       previewPlayingArm: previewPlaybackArm() && hookPlayback?.pausedAt === null ? previewPlaybackArm() : null,
       previewPausedArm: previewPlaybackArm() && hookPlayback?.pausedAt !== null ? previewPlaybackArm() : null,
       canSubmit: !!mtSession && mtSession.layers.length > 0 && !hookRecorder.active,
+      backingTracks,
+      showBackingStrip: backingTracks.length > 0,
     });
     syncComposeLayout();
   }
 
   function toggleMultitrackPanelExpanded(): void {
     mtPanelExpanded = !mtPanelExpanded;
+    if (mtPanelExpanded) closeHooksDrawer();
     if (mtPanelExpanded && !mtSession) beginMultitrackSession();
     renderMultitrackPanel();
     if (mtPanelExpanded) {
@@ -592,13 +654,21 @@ async function init(): Promise<void> {
 
   function expandMultitrackPanel(): void {
     if (!mtPanelExpanded) {
+      closeHooksDrawer();
       mtPanelExpanded = true;
       renderMultitrackPanel();
     }
   }
 
   function removeLayer(layerId: string): void {
-    if (!mtSession || hookRecorder.active) return;
+    if (!mtSession) return;
+    const layer = mtSession.layers.find((l) => l.id === layerId);
+    if (!layer) return;
+    if (hookRecorder.active && layer.kind === layerArm) {
+      toast("Can't remove the layer you're recording");
+      return;
+    }
+    if (layer.kind !== 'mix') backingMutedArms.delete(layer.kind as LayerArm);
     const before = mtSession.layers.length;
     mtSession.layers = mtSession.layers.filter((l) => l.id !== layerId);
     if (mtSession.layers.length === before - 1) {
@@ -612,6 +682,13 @@ async function init(): Promise<void> {
       return;
     }
     updateSessionLoopSec(mtSession);
+    if (hookRecorder.active && !fullTakeRecording) {
+      void restartOverdubLoopIfActive();
+    } else if (overdubLoopPlaying && hookPlayback?.isOverdubMonitor) {
+      void restartOverdubLoopIfActive();
+    } else {
+      stopOverdubLoopPlayback();
+    }
     renderMultitrackPanel();
   }
 
@@ -647,7 +724,22 @@ async function init(): Promise<void> {
     selectLayer(arm);
     reRecordArm = arm;
     renderMultitrackPanel();
-    dialogue.textContent = `DJ: Re-recording ${layerArmLabel(arm)} — tap ● Start recording when ready.`;
+    setDialogue(`DJ: Re-recording ${layerArmLabel(arm)} — tap ● Start recording when ready.`);
+  }
+
+  function backingLayerCount(excludeArm?: LayerArm): number {
+    if (!mtSession) return 0;
+    return mtSession.layers.filter((l) => l.kind !== 'mix' && (!excludeArm || l.kind !== excludeArm)).length;
+  }
+
+  function audibleBackingCount(excludeArm?: LayerArm): number {
+    if (!mtSession) return 0;
+    return mtSession.layers.filter((l) => {
+      if (l.kind === 'mix') return false;
+      if (excludeArm && l.kind === excludeArm) return false;
+      if (backingMutedArms.has(l.kind as LayerArm)) return false;
+      return true;
+    }).length;
   }
 
   function stopOverdubLoop(): void {
@@ -657,24 +749,67 @@ async function init(): Promise<void> {
   function stopOverdubLoopPlayback(): void {
     stopOverdubLoop();
     overdubLoopPlaying = false;
-    if (hookPlayback?.isOverdubMonitor) finishHookPlayback();
+    clearPreviewTimers();
+    if (hookPlayback?.isOverdubMonitor) {
+      finishHookPlayback({ restartLiveTransport: false });
+    } else if (transportIsRunning()) {
+      stopTransport();
+    }
   }
 
-  function startOverdubLoop(): void {
-    if (!mtSession || pendingHook) return;
-    const excludeArm = hookRecorder.active ? layerArm : undefined;
-    const backingLayers = mtSession.layers.filter(
-      (l) => l.kind !== 'mix' && (!excludeArm || l.kind !== excludeArm),
-    );
-    if (backingLayers.length === 0) {
-      if (hookRecorder.active) toast('Record another layer first to use as backing');
+  async function restartOverdubLoopIfActive(): Promise<void> {
+    const shouldPlay =
+      (overdubLoopPlaying && hookPlayback?.isOverdubMonitor) ||
+      (hookRecorder.active && !fullTakeRecording && audibleBackingCount(layerArm) > 0);
+    if (!shouldPlay) return;
+    const wasPaused = !!(hookPlayback?.isOverdubMonitor && hookPlayback.pausedAt !== null);
+    if (hookPlayback?.isOverdubMonitor) finishHookPlayback();
+    const hook = buildHookForOverdub();
+    if (!hook) {
+      overdubLoopPlaying = false;
+      overdubLoopActive = false;
+      renderMultitrackPanel();
       return;
     }
     overdubLoopActive = true;
     overdubLoopPlaying = true;
-    const hook = excludeArm
-      ? buildHookFromSessionExcluding(mtSession, excludeArm)
-      : buildHookFromSession(mtSession);
+    await playHook(hook, {
+      restorePattern: false,
+      reviewUi: false,
+      isOverdubMonitor: true,
+    });
+    if (wasPaused) pauseHookPlayback();
+    renderMultitrackPanel();
+  }
+
+  function toggleBackingMute(arm: LayerArm): void {
+    if (backingMutedArms.has(arm)) backingMutedArms.delete(arm);
+    else backingMutedArms.add(arm);
+
+    const excludeArm = hookRecorder.active && !fullTakeRecording ? layerArm : undefined;
+    if (audibleBackingCount(excludeArm) === 0) {
+      stopOverdubLoopPlayback();
+    } else {
+      void restartOverdubLoopIfActive();
+    }
+    renderMultitrackPanel();
+  }
+
+  function startOverdubLoop(): void {
+    if (!mtSession || pendingHook) return;
+    const excludeArm = hookRecorder.active && !fullTakeRecording ? layerArm : undefined;
+    if (audibleBackingCount(excludeArm) === 0) {
+      if (hookRecorder.active && backingLayerCount(excludeArm) > 0) {
+        toast('Unmute a backing track or tap ▶ Play');
+      } else if (hookRecorder.active) {
+        toast('Record another layer first to use as backing');
+      }
+      return;
+    }
+    overdubLoopActive = true;
+    overdubLoopPlaying = true;
+    const hook = buildHookForOverdub();
+    if (!hook) return;
     void playHook(hook, {
       restorePattern: false,
       reviewUi: false,
@@ -703,12 +838,13 @@ async function init(): Promise<void> {
   function cancelMultitrackSession(): void {
     mtSession = null;
     reRecordArm = null;
+    backingMutedArms.clear();
     mtPanelExpanded = false;
     stopOverdubLoopPlayback();
     if (composePanelMounts) closeComposeInstruments(composePanelNodes, composePanelMounts);
     renderMultitrackPanel();
     setRecStatus('Ready');
-    dialogue.textContent = 'DJ: Multitrack wiped. Hit REC whenever you’re ready.';
+    setDialogue('DJ: Multitrack wiped. Hit REC whenever you’re ready.');
     ensureLiveTransport();
   }
 
@@ -733,7 +869,7 @@ async function init(): Promise<void> {
     renderMultitrackPanel();
     const loopSec = hookPlaybackMs(hook) / 1000;
     setRecStatus(`Take ready · ${loopSec.toFixed(1)}s`);
-    dialogue.textContent = 'DJ: Hook ready — name it, listen back, then tap Submit ✓.';
+    setDialogue('DJ: Hook ready — name it, listen back, then tap Submit ✓.');
     showReviewBar(true);
     setReviewPlayButton('play');
   }
@@ -757,7 +893,7 @@ async function init(): Promise<void> {
     const firstDelay = Math.max(0, stepMs - offsetInStep);
 
     const tick = () => {
-      if (drumsOn) {
+      if (drumsOn || patternPreviewPlaying) {
         const s = transportStep;
         const gainMul = 0.9;
         if (pattern.kick[s]) recordDrumHit('kick', gainMul);
@@ -834,7 +970,7 @@ async function init(): Promise<void> {
     if (usingTransport) stopTransport();
     syncLiveInstrumentGains();
     if (hookRecorder.active) {
-      audio.beginRecordingMonitor(shouldRecordVoice());
+      audio.beginRecordingMonitor();
       syncRecordingTransport();
     }
     syncInstrumentsBlocked();
@@ -843,10 +979,14 @@ async function init(): Promise<void> {
 
   function finishHookPlayback(opts?: { restartLiveTransport?: boolean }): void {
     if (!hookPlayback) return;
-    const { restorePattern: shouldRestore, patternSnap, usingTransport, endTimerId, isOverdubMonitor, previewArm } =
+    const { restorePattern: shouldRestore, patternSnap, usingTransport, endTimerId, isOverdubMonitor, previewArm, pausedAt } =
       hookPlayback;
     const shouldRestartOverdub =
-      !!isOverdubMonitor && overdubLoopActive && mtSession !== null && pendingHook === null;
+      !!isOverdubMonitor &&
+      overdubLoopActive &&
+      mtSession !== null &&
+      pendingHook === null &&
+      pausedAt === null;
     const restartLive = opts?.restartLiveTransport ?? true;
     if (endTimerId) window.clearTimeout(endTimerId);
     hookPlayback = null;
@@ -865,7 +1005,7 @@ async function init(): Promise<void> {
     updateGearStatus();
     touchDrums?.refresh();
     if (hookRecorder.active) {
-      audio.beginRecordingMonitor(shouldRecordVoice());
+      audio.beginRecordingMonitor();
       syncRecordingTransport();
     }
     if (shouldRestartOverdub) {
@@ -895,10 +1035,10 @@ async function init(): Promise<void> {
   ): void {
     const untilSec = hook.recordedSec ?? hookContentSec(hook);
     const drumHits = hook.drum.hits ?? [];
-    const useHits = drumHits.length > 0;
     const usePattern = patternHasSteps(hook.drum);
+    const useHits = !usePattern && drumHits.length > 0;
 
-    const runReviewDrums = (fn: () => void): void => {
+    const runAt = (fn: () => void): void => {
       if (playAt !== undefined) {
         const ctx = audio.ensure();
         const delayMs = Math.max(0, Math.ceil((playAt - ctx.currentTime) * 1000));
@@ -909,37 +1049,12 @@ async function init(): Promise<void> {
       }
     };
 
-    if (session.reviewUi && (useHits || usePattern)) {
-      runReviewDrums(() => {
-        // One drum source only — pattern grid beats redundant hit stream.
-        if (usePattern) scheduleHookPatternDrums(hook.drum, fromSec, untilSec, playAt);
-        else scheduleHookDrumHits(hook.drum, drumHits, fromSec, untilSec, playAt);
-      });
-      return;
-    }
-
     if (usePattern) {
-      const startPlaybackTransport = (): void => {
-        drumsOn = true;
-        startTransportAt(fromSec, true);
-        session.usingTransport = true;
-      };
-      if (playAt !== undefined) {
-        const ctx = audio.ensure();
-        const delayMs = Math.max(0, Math.ceil((playAt - ctx.currentTime) * 1000));
-        if (delayMs === 0) {
-          startPlaybackTransport();
-        } else {
-          schedulePreview(startPlaybackTransport, delayMs);
-        }
-        return;
-      }
-      startPlaybackTransport();
+      runAt(() => scheduleHookPatternDrums(hook.drum, fromSec, untilSec, playAt));
       return;
     }
-
     if (useHits) {
-      scheduleHookDrumHits(hook.drum, drumHits, fromSec, untilSec, playAt);
+      runAt(() => scheduleHookDrumHits(hook.drum, drumHits, fromSec, untilSec, playAt));
       return;
     }
 
@@ -962,6 +1077,7 @@ async function init(): Promise<void> {
     hookPlayback.pausedAt = performance.now();
     audio.pauseVoicePlayback();
     audio.noteOffAll();
+    audio.mutePlaybackStems();
     if (hookPlayback.endTimerId) window.clearTimeout(hookPlayback.endTimerId);
     hookPlayback.endTimerId = null;
     clearPreviewTimers();
@@ -974,6 +1090,7 @@ async function init(): Promise<void> {
     if (!hookPlayback || hookPlayback.pausedAt === null) return;
     hookPlayback.totalPausedMs += performance.now() - hookPlayback.pausedAt;
     hookPlayback.pausedAt = null;
+    audio.unmutePlaybackStems();
     const elapsedSec = playbackElapsedMs() / 1000;
     const hook = hookPlayback.hook;
     const ctx = audio.ensure();
@@ -1016,9 +1133,14 @@ async function init(): Promise<void> {
 
   /** Live drum sequencer — only when this take needs it; never restart mid-loop. */
   function syncRecordingTransport(): void {
+    if (hookPlayback?.isOverdubMonitor) {
+      stopTransport();
+      return;
+    }
     const layerMode = overdubOn && !fullTakeRecording;
+    const recordingDrumsTrack = !layerMode || layerArm === 'drums' || fullTakeRecording;
     const wantDrums =
-      drumsOn && (!layerMode || layerArm === 'drums' || fullTakeRecording);
+      recordingDrumsTrack && (drumsOn || patternPreviewPlaying || hookRecorder.active);
     if (!wantDrums) {
       stopTransport();
       return;
@@ -1029,12 +1151,40 @@ async function init(): Promise<void> {
 
   function ensureLiveTransport(): void {
     if (submitted || hookRecorder.active || hookPlayback || reviewBarOpen()) return;
-    if (!drumsOn) {
+    if (!patternPreviewPlaying) {
       stopTransport();
       return;
     }
     if (transportIsRunning()) return;
     startTransport();
+  }
+
+  function isPatternPlaying(): boolean {
+    return transportIsRunning();
+  }
+
+  function canTogglePatternPlay(): boolean {
+    if (submitted || reviewBarOpen() || hookPlayback) return false;
+    if (hookRecorder.active) {
+      if (fullTakeRecording) return true;
+      if (overdubOn && layerArm !== 'drums') return false;
+      return true;
+    }
+    return true;
+  }
+
+  function togglePatternPlay(): void {
+    if (!canTogglePatternPlay()) return;
+    void audio.resume();
+    if (transportIsRunning()) {
+      patternPreviewPlaying = false;
+      stopTransport();
+      touchDrums?.refresh();
+      return;
+    }
+    patternPreviewPlaying = true;
+    startTransport();
+    touchDrums?.refresh();
   }
 
   function hookContentSec(hook: HookData, loopSecOverride?: number): number {
@@ -1129,6 +1279,7 @@ async function init(): Promise<void> {
       for (let i = 0; i < stepsPerBar; i++) pattern[s][i] = src[s][i] ?? 0;
     }
     updateGearStatus();
+    touchDrums?.refresh();
   }
 
   function updateGearStatus(): void {
@@ -1156,17 +1307,12 @@ async function init(): Promise<void> {
 
   function syncComposeToolbar(): void {
     const recBtn = document.getElementById('compose-rec') as HTMLButtonElement | null;
-    const micBtn = document.getElementById('compose-mic') as HTMLButtonElement | null;
     const timer = document.getElementById('compose-rec-timer') as HTMLSpanElement | null;
-    if (!recBtn || !micBtn || !timer) return;
+    if (!recBtn || !timer) return;
     const rec = hookRecorder.active && !fullTakeRecording;
     recBtn.classList.toggle('recording', rec);
     recBtn.textContent = rec ? '■ STOP' : '● REC';
     recBtn.disabled = submitted || !!player?.myHookId || !document.body.classList.contains('instrument-open');
-    micBtn.textContent = micOn ? '🎤 MIC ON' : '🎤 MIC OFF';
-    micBtn.classList.toggle('mic-off', !micOn);
-    micBtn.classList.toggle('vox-armed', overdubOn && layerArm === 'vox');
-    micBtn.setAttribute('aria-pressed', micOn ? 'true' : 'false');
     timer.classList.toggle('hidden', !rec);
     if (rec) timer.textContent = `${recordElapsedSec.toFixed(1)}s`;
   }
@@ -1176,7 +1322,6 @@ async function init(): Promise<void> {
     const entry = activeVoices.get(slot);
     if (!entry) return;
     if (voiceId !== undefined && entry.voiceId !== voiceId) return;
-    if (entry.autoOff) window.clearTimeout(entry.autoOff);
     audio.noteOff(entry.voiceId);
     activeVoices.delete(slot);
   }
@@ -1185,7 +1330,6 @@ async function init(): Promise<void> {
     for (const slot of [...activeVoices.keys()]) {
       const entry = activeVoices.get(slot);
       if (!entry) continue;
-      if (entry.autoOff) window.clearTimeout(entry.autoOff);
       audio.noteOff(entry.voiceId);
       activeVoices.delete(slot);
     }
@@ -1235,15 +1379,7 @@ async function init(): Promise<void> {
     releaseHeldNote(source, inputId);
 
     const voiceId = ++nextVoiceId;
-    if (sustainOn) {
-      activeVoices.set(slot, { voiceId });
-    } else {
-      const autoOff = window.setTimeout(() => {
-        releaseHeldNote(source, inputId, voiceId);
-        finalizeRecordedNote(source, inputId);
-      }, Math.round(SHORT_NOTE_SEC * 1000));
-      activeVoices.set(slot, { voiceId, autoOff });
-    }
+    activeVoices.set(slot, { voiceId });
 
     if (layer === 'bass') {
       audio.setBassGain(bassGain);
@@ -1272,6 +1408,7 @@ async function init(): Promise<void> {
     overlay.setAttribute('aria-hidden', show ? 'false' : 'true');
     document.body.classList.toggle('review-open', show);
     if (show) {
+      closeHelp();
       silenceStudioForReview();
       const titleInput = el<HTMLInputElement>('review-title');
       titleInput.value = pendingHook?.title?.trim() ?? '';
@@ -1300,10 +1437,9 @@ async function init(): Promise<void> {
     if (recordElapsedSec < MIN_RECORD_SEC) {
       hookRecorder.cancel();
       fullTakeRecording = false;
-      void voiceRec.stop();
       finishRecordingAudio();
       setRecStatus('Too short — keep jamming');
-      dialogue.textContent = 'DJ: That was a blip. Record at least half a second.';
+      setDialogue('DJ: That was a blip. Record at least half a second.');
       toast('Hold REC a little longer');
       renderMultitrackPanel();
       return;
@@ -1312,16 +1448,8 @@ async function init(): Promise<void> {
     const instruments = hookRecorder.stop();
     finishRecordingAudio();
 
-    let voice: HookData['voice'] | undefined;
-    if (shouldRecordVoice()) {
-      const captured = await voiceRec.stop();
-      if (captured) voice = captured;
-    } else {
-      void voiceRec.stop();
-    }
-
     if (overdubOn && !fullTakeRecording) {
-      const layer = createLayerFromPass(instruments, recordElapsedSec, voice);
+      const layer = createLayerFromPass(instruments, recordElapsedSec);
       const session = beginMultitrackSession();
       if (!upsertLayer(session, layer, recordElapsedSec)) {
         toast(`Max ${MAX_TRACK_LAYERS} layers — remove one first`);
@@ -1334,18 +1462,12 @@ async function init(): Promise<void> {
       } else if (livePatternHasSteps()) {
         session.pattern = mergeDrumPatterns(session.pattern, snapshotPatternCopy());
       }
-      if (voice) {
-        try {
-          await audio.preloadVoice(voice);
-        } catch {
-          /* preview decode failed */
-        }
-      }
       reRecordArm = null;
       fullTakeRecording = false;
+      patternPreviewPlaying = false;
       stopTransport();
       renderMultitrackPanel();
-      dialogue.textContent = `DJ: ${layerArmLabel(layerArm)} saved (${recordElapsedSec.toFixed(1)}s). Tap ▶ on the slot or Submit ✓ when ready.`;
+      setDialogue(`DJ: ${layerArmLabel(layerArm)} saved (${recordElapsedSec.toFixed(1)}s). Tap ▶ on the slot or Submit ✓ when ready.`);
       setRecStatus(`${session.layers.length} layer(s) · ${session.loopSec.toFixed(1)}s total`);
       return;
     }
@@ -1374,20 +1496,11 @@ async function init(): Promise<void> {
       mix,
       notes: instruments.notes,
       recordedSec: recordElapsedSec,
-      ...(voice ? { voice } : {}),
     };
-
-    if (voice) {
-      try {
-        await audio.preloadVoice(voice);
-      } catch {
-        /* preview decode failed — playback will retry */
-      }
-    }
 
     pendingHook = hook;
     setRecStatus(`Take ready · ${recordElapsedSec.toFixed(1)}s`);
-    dialogue.textContent = 'DJ: Got the take. Name it, listen back, or send it in.';
+    setDialogue('DJ: Got the take. Name it, listen back, or send it in.');
     showReviewBar(true);
     setReviewPlayButton('play');
   }
@@ -1406,7 +1519,7 @@ async function init(): Promise<void> {
     renderMultitrackPanel();
     showReviewBar(false);
     setRecStatus('Ready');
-    dialogue.textContent = 'DJ: Tape wiped. Hit REC whenever you’re ready for a new take.';
+    setDialogue('DJ: Tape wiped. Hit REC whenever you’re ready for a new take.');
     toast('Recording deleted');
   }
 
@@ -1435,11 +1548,11 @@ async function init(): Promise<void> {
       applauseEl.classList.remove('hidden');
       window.setTimeout(() => applauseEl.classList.add('hidden'), 900);
       toast('Hook recorded!');
-      dialogue.textContent = 'DJ: Submitted. Vote on today’s hooks!';
+      setDialogue('DJ: Submitted. Vote on today’s hooks!');
       setRecStatus('Submitted ✓');
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Submit failed');
-      dialogue.textContent = 'DJ: Tape jammed. Try submitting again.';
+      setDialogue('DJ: Tape jammed. Try submitting again.');
       setRecStatus('Error — try again');
     }
   }
@@ -1458,14 +1571,15 @@ async function init(): Promise<void> {
     studio.releaseInstrumentInput();
     touchKeysMount?.releaseAll();
     audio.prepareForRecording();
-    audio.beginRecordingMonitor(shouldRecordVoice());
+    audio.beginRecordingMonitor();
     syncInstrumentsBlocked();
 
-    if (overdubOn && !fullTakeRecording) {
+    if (!fullTakeRecording) {
+      overdubOn = true;
       beginMultitrackSession();
       expandMultitrackPanel();
       renderMultitrackPanel();
-      if (layerArm === 'drums' || layerArm === 'vox') {
+      if (layerArm === 'drums') {
         openInstrumentForArm(layerArm);
       }
     } else {
@@ -1476,24 +1590,25 @@ async function init(): Promise<void> {
     recTimeAnchor = audio.ensure().currentTime;
     recordingInstruments = true;
     hookRecorder.start();
+    const layerMode = !fullTakeRecording;
+    if (layerMode && layerArm !== 'drums') patternPreviewPlaying = false;
     syncRecordingTransport();
 
-    const layerMode = overdubOn && !fullTakeRecording;
-    if (shouldRecordVoice()) {
-      const micOk = await voiceRec.start();
-      if (!micOk) {
-        toast(VoiceRecorder.micUnavailableMessage());
-        if (layerMode && layerArm === 'vox') {
-          dialogue.textContent = 'DJ: Mic unavailable here — try keys/drums, or test locally with npm run local.';
-        }
-      }
-    }
     recordElapsedSec = 0;
-    const layerHint = layerMode ? layerArmLabel(layerArm).toLowerCase() : 'keys, bass, drums, and voice';
+    const layerHint = layerMode ? layerArmLabel(layerArm).toLowerCase() : 'keys, bass, and drums';
     const capSec = layerMode ? sessionRecordCapSec() : MAX_RECORD_SEC;
-    dialogue.textContent = layerMode
-      ? `DJ: Recording ${layerHint} — up to ${capSec.toFixed(0)}s. Tap ■ Stop & save when done.`
-      : 'DJ: Recording full take — everything at once. Tap STOP on the tape deck when done.';
+    if (layerMode && audibleBackingCount(layerArm) > 0) {
+      window.setTimeout(() => startOverdubLoop(), 150);
+    }
+    setDialogue(
+      layerMode
+        ? backingLayerCount(layerArm) > 0
+          ? audibleBackingCount(layerArm) > 0
+            ? `DJ: Recording ${layerHint} over your other layers — up to ${capSec.toFixed(0)}s.`
+            : `DJ: Recording ${layerHint} — backing tracks are muted. Unmute in the strip above.`
+          : `DJ: Recording ${layerHint} — up to ${capSec.toFixed(0)}s. Tap ■ Stop & save when done.`
+        : 'DJ: Recording full take — everything at once. Tap STOP on the tape deck when done.',
+    );
     setRecStatus(
       layerMode
         ? `● REC ${layerArmLabel(layerArm)} · ${capSec.toFixed(0)}s max`
@@ -1514,9 +1629,11 @@ async function init(): Promise<void> {
 
     const maxSec = layerMode ? sessionRecordCapSec() : MAX_RECORD_SEC;
     recMaxTimer = window.setTimeout(() => {
-      dialogue.textContent = layerMode
-        ? 'DJ: Layer time is up — saved. Listen back or add another layer.'
-        : 'DJ: Tape full — review your take below.';
+      setDialogue(
+        layerMode
+          ? 'DJ: Layer time is up — saved. Listen back or add another layer.'
+          : 'DJ: Tape full — review your take below.',
+      );
       void stopRecording();
     }, maxSec * 1000);
   }
@@ -1524,7 +1641,7 @@ async function init(): Promise<void> {
   function toggleStudioRec(): void {
     if (submitted || player?.myHookId) {
       toast('Already submitted today — one hook per day');
-      dialogue.textContent = 'DJ: You already dropped today’s hook.';
+      setDialogue('DJ: You already dropped today’s hook.');
       return;
     }
     if (hookRecorder.active) {
@@ -1537,7 +1654,7 @@ async function init(): Promise<void> {
   function toggleLayerRec(arm?: LayerArm): void {
     if (submitted || player?.myHookId) {
       toast('Already submitted today — one hook per day');
-      dialogue.textContent = 'DJ: You already dropped today’s hook.';
+      setDialogue('DJ: You already dropped today’s hook.');
       return;
     }
     if (arm && layerArm !== arm) selectLayer(arm);
@@ -1557,14 +1674,11 @@ async function init(): Promise<void> {
       echo: mixPct(mix.echo),
       rev: mixPct(mix.reverb),
       atk: mixPct(mix.attack),
-      voxfx: audio.getVoxFx().toUpperCase(),
       dub: overdubOn ? 'ON' : 'OFF',
       lay: layerArmLabel(layerArm),
-      mic: micOn ? 'ON' : 'OFF',
       leadvol: mixPct(leadGain),
       bassvol: mixPct(bassGain),
       drumvol: mixPct(drumGain),
-      voxvol: mixPct(mix.vox),
       sust: sustainOn ? 'ON' : 'OFF',
     };
   }
@@ -1588,13 +1702,14 @@ async function init(): Promise<void> {
             stopTransport();
             syncRecordingTransport();
           }
-        } else if (drumsOn) {
+        } else if (transportIsRunning()) {
           stopTransport();
           startTransport();
         }
         break;
       case 'drm':
         drumsOn = up;
+        if (!drumsOn && !patternPreviewPlaying && !hookRecorder.active) stopTransport();
         if (hookRecorder.active) syncRecordingTransport();
         else ensureLiveTransport();
         break;
@@ -1621,11 +1736,6 @@ async function init(): Promise<void> {
         audio.nudgeMix('attack', up ? 1 : -1);
         mix = audio.getMix();
         break;
-      case 'voxfx': {
-        const next = audio.cycleVoxFx();
-        toast(`Vox FX: ${next.toUpperCase()}`);
-        break;
-      }
       case 'dub':
         overdubOn = up;
         if (!overdubOn && mtSession) cancelMultitrackSession();
@@ -1634,7 +1744,7 @@ async function init(): Promise<void> {
         toast(overdubOn ? 'Multitrack DUB ON' : 'Multitrack DUB OFF');
         break;
       case 'lay': {
-        const arms: LayerArm[] = ['drums', 'keys', 'bass', 'vox'];
+        const arms: LayerArm[] = ['drums', 'keys', 'bass'];
         const idx = arms.indexOf(layerArm);
         const next = up
           ? arms[(idx + 1) % arms.length]!
@@ -1643,32 +1753,6 @@ async function init(): Promise<void> {
         toast(`Record next: ${layerArmLabel(next)}`);
         break;
       }
-      case 'voxvol': {
-        mix.vox = stepVol(mix.vox, dir);
-        audio.setMix({ vox: mix.vox });
-        toast(`Vox volume: ${mixPct(mix.vox)}`);
-        break;
-      }
-      case 'mic':
-        micOn = up;
-        syncLiveInstrumentGains();
-        if (touchKeysMount?.isVisible()) touchKeysMount.setFocusLayer('all');
-        if (micOn) {
-          void voiceRec.probe().then((ok) => {
-            if (!ok) {
-              micOn = false;
-              syncLiveInstrumentGains();
-              syncComposeToolbar();
-              toast(VoiceRecorder.micUnavailableMessage());
-            } else {
-              toast('Mic ON');
-            }
-          });
-        } else {
-          toast('Mic OFF');
-        }
-        syncComposeToolbar();
-        break;
       case 'leadvol':
         leadGain = stepVol(leadGain, dir);
         audio.setLeadGain(leadGain);
@@ -1686,16 +1770,7 @@ async function init(): Promise<void> {
         break;
       case 'sust':
         sustainOn = up;
-        if (sustainOn) {
-          for (const entry of activeVoices.values()) {
-            if (entry.autoOff) {
-              window.clearTimeout(entry.autoOff);
-              delete entry.autoOff;
-            }
-          }
-        } else {
-          releaseAllHeldNotes();
-        }
+        if (!sustainOn) releaseAllHeldNotes();
         toast(sustainOn ? 'Sustain ON' : 'Sustain OFF');
         break;
     }
@@ -1721,6 +1796,8 @@ async function init(): Promise<void> {
     },
     onRecPress: toggleStudioRec,
     onCtrl: handleCtrl,
+    onPatternPlayToggle: togglePatternPlay,
+    getPatternPlaying: isPatternPlaying,
     getRecordingProgress: () => clamp(recordTimeSec() / MAX_RECORD_SEC, 0, 1),
     isRecording: () => hookRecorder.active,
     getPattern: () => pattern,
@@ -1734,7 +1811,7 @@ async function init(): Promise<void> {
     getEchoLabel: () => mixPct(mix.echo),
     getReverbLabel: () => mixPct(mix.reverb),
     getAttackLabel: () => mixPct(mix.attack),
-    getMicLabel: () => (micOn ? 'ON' : 'OFF'),
+    getDubLabel: () => (overdubOn ? 'ON' : 'OFF'),
     getLeadVolLabel: () => mixPct(leadGain),
     getBassVolLabel: () => mixPct(bassGain),
     getDrumVolLabel: () => mixPct(drumGain),
@@ -1831,19 +1908,17 @@ async function init(): Promise<void> {
     const data = await apiInit();
     if (data.type !== 'init') throw new Error('bad init');
     player = data.player;
-    roundPill.textContent = `Round ${data.now.roundId}`;
     renderReveal(data.prevReveal);
     renderHooks(data.hooks);
     if (player.myHookId) {
       submitted = true;
-      dialogue.textContent = 'DJ: You already dropped today’s hook. Vote below!';
+      setDialogue('DJ: You already dropped today’s hook. Vote below!');
       setRecStatus('Already submitted');
     }
   } catch (e) {
     toast(e instanceof Error ? e.message : 'Init failed');
   }
 
-  startTransport();
   updateGearStatus();
 
   const helpCloseBtn = el<HTMLButtonElement>('help-close-btn');
@@ -1860,14 +1935,18 @@ async function init(): Promise<void> {
   }
 
   function closeHelp(): void {
-    helpPanel.classList.add('hidden');
+    helpOverlay.classList.add('hidden');
+    helpOverlay.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('help-open');
     helpToggle.setAttribute('aria-expanded', 'false');
     helpToggle.textContent = 'Help ▾';
   }
 
   function openHelp(): void {
     closeTour();
-    helpPanel.classList.remove('hidden');
+    helpOverlay.classList.remove('hidden');
+    helpOverlay.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('help-open');
     helpToggle.setAttribute('aria-expanded', 'true');
     helpToggle.textContent = 'Help ▴';
   }
@@ -1895,24 +1974,76 @@ async function init(): Promise<void> {
     closeHelp();
   });
 
+  helpOverlay.addEventListener('click', (ev) => {
+    if (ev.target === helpOverlay) closeHelp();
+  });
+
+  helpPanel.addEventListener('click', (ev) => ev.stopPropagation());
+
   helpToggle.addEventListener('click', () => {
-    const isOpen = !helpPanel.classList.contains('hidden');
+    const isOpen = !helpOverlay.classList.contains('hidden');
     if (isOpen) closeHelp();
     else openHelp();
   });
 
+  function closeHooksDrawer(): void {
+    const drawer = el<HTMLDivElement>('hooks-drawer');
+    drawer.classList.remove('open');
+    drawer.setAttribute('aria-hidden', 'true');
+    hooksBackdrop.classList.add('hidden');
+    hooksBackdrop.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('hooks-drawer-open');
+    hooksToggle.setAttribute('aria-expanded', 'false');
+    hooksToggle.textContent = 'Today\u2019s hooks ▾';
+  }
+
+  function openHooksDrawer(): void {
+    const drawer = el<HTMLDivElement>('hooks-drawer');
+    drawer.classList.add('open');
+    drawer.setAttribute('aria-hidden', 'false');
+    hooksBackdrop.classList.remove('hidden');
+    hooksBackdrop.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('hooks-drawer-open');
+    hooksToggle.setAttribute('aria-expanded', 'true');
+    hooksToggle.textContent = 'Today\u2019s hooks ▴';
+  }
+
   hooksToggle.addEventListener('click', () => {
     const drawer = el<HTMLDivElement>('hooks-drawer');
-    drawer.classList.toggle('open');
     const open = drawer.classList.contains('open');
-    hooksToggle.textContent = open ? 'Today\u2019s hooks ▾' : 'Today\u2019s hooks ▲';
+    if (open) closeHooksDrawer();
+    else openHooksDrawer();
   });
 
-  // On-screen compose panels (console, drums, keys) + mobile REC/mic bar
+  hooksCloseBtn.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    closeHooksDrawer();
+  });
+
+  hooksBackdrop.addEventListener('click', () => {
+    closeHooksDrawer();
+  });
+
+  function updateComposeStackHeight(): void {
+    const keysOpen = touchKeysMount!.isVisible();
+    const consoleOpen = touchConsole!.isVisible();
+    const drumsOpen = touchDrums!.isVisible();
+    const instrumentOpen = keysOpen || drumsOpen;
+    const anyOpen = instrumentOpen || consoleOpen;
+    const hooksVisible = isCoarsePointer && !instrumentOpen && !consoleOpen;
+    const composeH = composeEl.offsetHeight;
+    const hooksReserve = hooksVisible ? 52 : 0;
+    const stripReserve = isCoarsePointer && multitrackPanelVisible() && !anyOpen && !mtPanelExpanded ? 88 : 0;
+    const covered = (composeH + hooksReserve + stripReserve) / Math.max(window.innerHeight, 1);
+    const reservePx = Math.ceil(composeH + hooksReserve + stripReserve + 10);
+    document.documentElement.style.setProperty('--compose-stack-h', `${reservePx}px`);
+    studio.setComposeCoverage(Math.min(0.72, covered > 0 ? covered : isCoarsePointer ? 0.16 : 0));
+  }
+
+  // On-screen compose panels (console, drums, keys) + mobile REC bar
   const composeEl = el<HTMLDivElement>('mobile-compose');
   const composeToolbar = el<HTMLDivElement>('compose-toolbar');
   const composeRec = el<HTMLButtonElement>('compose-rec');
-  const composeMic = el<HTMLButtonElement>('compose-mic');
   const composeStackEl = el<HTMLDivElement>('mobile-compose-stack');
   const composeScrollEl = el<HTMLDivElement>('mobile-compose-scroll');
   const composePanelNodes = {
@@ -1928,16 +2059,13 @@ async function init(): Promise<void> {
 
   function openInstrumentForArm(arm: LayerArm): void {
     if (!composePanelMounts) return;
-    if (arm === 'vox') micOn = true;
     openComposeArm(arm, composePanelNodes, composePanelMounts);
     syncComposeToolbar();
     syncComposeLayout();
-    dialogue.textContent = layerFlowHint(
-      arm,
-      mtSession ? !!findLayerForArm(mtSession, arm) : false,
+    setDialogue(
+      layerFlowHint(arm, mtSession ? !!findLayerForArm(mtSession, arm) : false),
     );
   }
-  const isCoarsePointer = window.matchMedia('(pointer: coarse)').matches;
   const consoleToggle = el<HTMLButtonElement>('console-toggle');
   const drumsToggle = el<HTMLButtonElement>('drums-toggle');
   const keysToggle = el<HTMLButtonElement>('keys-toggle');
@@ -1958,6 +2086,8 @@ async function init(): Promise<void> {
       if (hookRecorder.active) hookRecorder.drumHit(sound, 0.7);
     },
     onCtrl: handleCtrl,
+    onPatternPlayToggle: togglePatternPlay,
+    getPatternPlaying: isPatternPlaying,
     getKitLabel: () => drumKitLabel(drumKit),
     getPatLabel: () => drumPatternLabel(drumPatternName),
     getPattern: () => pattern,
@@ -1990,27 +2120,25 @@ async function init(): Promise<void> {
     keysToggle.setAttribute('aria-expanded', keysOpen ? 'true' : 'false');
 
     composeToolbar.classList.toggle('hidden', !anyOpen);
-    document.body.classList.toggle('compose-open', anyOpen || overdubOn);
+    document.body.classList.toggle('compose-open', anyOpen || multitrackPanelVisible());
     document.body.classList.toggle('console-open', consoleOpen);
     document.body.classList.toggle('instrument-open', instrumentOpen);
     document.body.classList.toggle('keys-open', keysOpen);
     composeEl.classList.toggle('mt-expanded', mtPanelExpanded);
+    composeEl.classList.toggle('instrument-open', instrumentOpen);
+    composeEl.classList.toggle('console-open', consoleOpen);
     document.body.classList.toggle('mt-expanded', mtPanelExpanded);
 
     syncComposeToolbar();
 
     requestAnimationFrame(() => {
-      const composeH = composeEl.offsetHeight;
-      const hooksReserve = isCoarsePointer ? 52 : 0;
-      const stripReserve = isCoarsePointer && overdubOn && !anyOpen && !mtPanelExpanded ? 88 : 0;
-      const covered = (composeH + hooksReserve + stripReserve) / Math.max(window.innerHeight, 1);
-      const reservePx = Math.ceil(composeH + hooksReserve + stripReserve + 10);
-      document.documentElement.style.setProperty('--compose-stack-h', `${reservePx}px`);
-      studio.setComposeCoverage(Math.min(0.72, covered > 0 ? covered : isCoarsePointer ? 0.16 : 0));
+      updateComposeStackHeight();
+      requestAnimationFrame(updateComposeStackHeight);
     });
   }
 
   const setConsoleOpen = (open: boolean) => {
+    if (open) closeHooksDrawer();
     touchConsole!.setVisible(open);
     composePanelNodes.console.classList.toggle('hidden', !open);
     syncComposeLayout();
@@ -2021,11 +2149,18 @@ async function init(): Promise<void> {
     }
   };
   const setDrumsOpen = (open: boolean) => {
+    if (open) closeHooksDrawer();
     touchDrums!.setVisible(open);
     composePanelNodes.drums.classList.toggle('hidden', !open);
     syncComposeLayout();
+    if (open) {
+      requestAnimationFrame(() => {
+        composePanelNodes.drums.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      });
+    }
   };
   const setKeysOpen = (open: boolean) => {
+    if (open) closeHooksDrawer();
     touchKeysMount!.setVisible(open);
     composePanelNodes.keys.classList.toggle('hidden', !open);
     if (!open) {
@@ -2036,6 +2171,11 @@ async function init(): Promise<void> {
       touchKeysMount!.setFocusLayer('all');
     }
     syncComposeLayout();
+    if (open) {
+      requestAnimationFrame(() => {
+        composePanelNodes.keys.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      });
+    }
   };
 
   multitrackPanel = mountMultitrackPanel({
@@ -2043,6 +2183,7 @@ async function init(): Promise<void> {
     loopLabel: el<HTMLDivElement>('mt-loop-label'),
     collapsedSummary: el<HTMLDivElement>('mt-collapsed-summary'),
     collapseToggle: el<HTMLButtonElement>('mt-collapse-toggle'),
+    backingStrip: el<HTMLDivElement>('mt-backing-strip'),
     slotsGrid: el<HTMLDivElement>('mt-slots-grid'),
     armRow: el<HTMLDivElement>('mt-arm-row'),
     submitBtn: el<HTMLButtonElement>('mt-submit'),
@@ -2061,11 +2202,9 @@ async function init(): Promise<void> {
     onReRecord: (arm) => requestReRecord(arm),
     onRemoveLayer: (id) => removeLayer(id),
     onPreviewLayer: (arm) => toggleLayerPreview(arm),
+    onToggleBackingMute: (arm) => toggleBackingMute(arm),
     onToggleExpanded: () => toggleMultitrackPanelExpanded(),
   });
-
-  renderMultitrackPanel();
-  syncComposeLayout();
 
   composeRec.addEventListener('click', (ev) => {
     ev.preventDefault();
@@ -2073,32 +2212,48 @@ async function init(): Promise<void> {
     touchKeysMount?.releaseAll();
     toggleLayerRec(layerArm);
   });
-  composeMic.addEventListener('click', () => handleCtrl('mic', micOn ? 'down' : 'up'));
 
-  consoleToggle.addEventListener('click', () => setConsoleOpen(!touchConsole!.isVisible()));
+  consoleToggle.addEventListener('click', () => {
+    const opening = !touchConsole!.isVisible();
+    setConsoleOpen(opening);
+    if (opening) {
+      setKeysOpen(false);
+      setDrumsOpen(false);
+    }
+  });
   drumsToggle.addEventListener('click', () => {
-    if (overdubOn && mtPanelExpanded) {
+    if (useMultitrackLayerPicker()) {
       switchMultitrackLayer('drums');
       return;
     }
     const opening = !touchDrums!.isVisible();
     setDrumsOpen(opening);
-    if (opening) setKeysOpen(false);
+    if (opening) {
+      setKeysOpen(false);
+      setConsoleOpen(false);
+    }
   });
   keysToggle.addEventListener('click', () => {
-    if (overdubOn && mtPanelExpanded) {
+    if (useMultitrackLayerPicker()) {
       switchMultitrackLayer('keys');
       return;
     }
     const opening = !touchKeysMount!.isVisible();
     setKeysOpen(opening);
-    if (opening) setDrumsOpen(false);
+    if (opening) {
+      setDrumsOpen(false);
+      setConsoleOpen(false);
+    }
   });
 
   // Phones/tablets: compact multitrack strip only until user picks a layer
   if (isCoarsePointer) {
     document.body.classList.add('mobile-layout');
+    beginMultitrackSession();
+    const composeResize = new ResizeObserver(() => updateComposeStackHeight());
+    composeResize.observe(composeEl);
   }
+  renderMultitrackPanel();
   syncComposeLayout();
 
   // Keep drum pad highlight in sync with transport
@@ -2120,7 +2275,7 @@ async function init(): Promise<void> {
       resumeHookPlayback();
       return;
     }
-    dialogue.textContent = 'DJ: Rolling the tape back for you…';
+    setDialogue('DJ: Rolling the tape back for you…');
     void playHook(pendingHook, { restorePattern: false, reviewUi: true });
   });
 
@@ -2151,7 +2306,7 @@ async function init(): Promise<void> {
     try {
       if (action === 'play') {
         const hook = await apiGetHook(hookId);
-        dialogue.textContent = 'DJ: Listen up…';
+        setDialogue('DJ: Listen up…');
         void playHook(hook);
         return;
       }
@@ -2160,7 +2315,7 @@ async function init(): Promise<void> {
         player = res.player;
         renderReveal(res.prevReveal);
         renderHooks(res.hooks);
-        dialogue.textContent = 'DJ: Vote locked.';
+        setDialogue('DJ: Vote locked.');
       }
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Action failed');
@@ -2171,7 +2326,6 @@ async function init(): Promise<void> {
     'pointerdown',
     () => {
       void audio.resume();
-      void voiceRec.probe();
     },
     { once: true },
   );
@@ -2180,6 +2334,8 @@ async function init(): Promise<void> {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') releaseAllHeldNotes();
   });
+
+  setDialogue(DJ_WELCOME);
 }
 
 void init();

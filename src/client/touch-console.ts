@@ -14,11 +14,8 @@ const MAIN_CONTROLS: ControlDef[] = [
   { action: 'bass', label: 'BASS' },
   { action: 'bpm', label: 'BPM' },
   { action: 'drm', label: 'DRM' },
-  { action: 'voxfx', label: 'VOX' },
   { action: 'dub', label: 'DUB' },
   { action: 'lay', label: 'LAY' },
-  { action: 'mic', label: 'MIC' },
-  { action: 'voxvol', label: 'VOX VOL' },
   { action: 'sust', label: 'SUST' },
 ];
 
