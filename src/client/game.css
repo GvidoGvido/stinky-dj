@@ -880,10 +880,6 @@ body {
   box-shadow: 0 0 14px rgba(255, 100, 160, 0.35);
 }
 
-body.compose-open .rec-status {
-  top: 48px;
-}
-
 body.compose-open .hooks-toggle {
   bottom: calc(10px + var(--compose-stack-h, 96px));
 }
@@ -898,11 +894,6 @@ body.review-open .tour-overlay:not(.hidden) {
 }
 
 /* hooks-drawer positioning lives in .hooks-drawer rules below */
-
-/* Legacy alias */
-body.keys-open .rec-status {
-  top: 48px;
-}
 
 body.keys-open .hooks-toggle {
   bottom: calc(10px + var(--compose-stack-h, 96px));
@@ -1069,10 +1060,8 @@ body.help-open #studio-root {
 
 .rec-status {
   pointer-events: none;
-  position: absolute;
-  left: 12px;
-  top: 48px;
-  transform: none;
+  position: relative;
+  align-self: center;
   padding: 6px 14px;
   background: rgba(0, 0, 0, 0.45);
   border: 1px solid rgba(255, 74, 74, 0.35);
@@ -1690,6 +1679,11 @@ body.instruments-blocked .review-overlay * {
   justify-content: flex-end;
 }
 
+.mt-slot-actions .mt-slot-btn {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
 .mt-slot-actions-record {
   margin-top: 6px;
 }
@@ -2268,7 +2262,6 @@ body.compose-open .hooks-drawer {
   }
 
   .rec-status {
-    top: 44px;
     font-size: 0.68rem;
   }
   .help-toggle {

@@ -91,7 +91,7 @@ export function mountTouchConsole(opts: TouchConsoleOptions): {
 
   container.innerHTML = `
     <div class="tp-head">
-      <span>HOOK SYNTH</span>
+      <span>TUNEBOX SYNTH</span>
       <button type="button" class="tp-close" aria-label="Close console">✕</button>
     </div>
     <div class="tc-main-grid"></div>

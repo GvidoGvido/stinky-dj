@@ -106,7 +106,7 @@ function layerSummary(layer: RecordedLayer): string {
   const bits: string[] = [];
   if (layer.notes.length) bits.push(`${layer.notes.length} keys`);
   if (layer.bassNotes.length) bits.push(`${layer.bassNotes.length} bass`);
-  if (layer.kind === 'drums' || layer.drumPattern) {
+  if (layer.kind === 'drums') {
     const pat = layer.drumPattern;
     if (pat) {
       let steps = 0;
@@ -512,7 +512,8 @@ export function mountMultitrackPanel(opts: MultitrackPanelOptions): {
         card.appendChild(actions);
       }
 
-      if (isActive) {
+      const showRecordRow = isActive && (isRecordingNow || !layer || isReRecord);
+      if (showRecordRow) {
         const recRow = document.createElement('div');
         recRow.className = 'mt-slot-actions mt-slot-actions-record';
         const rec = document.createElement('button');

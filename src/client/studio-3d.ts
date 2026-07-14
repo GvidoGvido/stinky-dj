@@ -1323,7 +1323,7 @@ export class Studio3D {
     lctx.fillStyle = '#7cff5c';
     lctx.font = 'bold 24px Trebuchet MS, sans-serif';
     lctx.textAlign = 'center';
-    lctx.fillText('HOOK SYNTH', 128, 29);
+    lctx.fillText('TUNEBOX SYNTH', 128, 29);
     const logo = new THREE.Mesh(
       new THREE.PlaneGeometry(0.34, 0.048),
       new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(logoC), transparent: true }),

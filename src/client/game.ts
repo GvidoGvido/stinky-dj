@@ -479,6 +479,14 @@ async function init(): Promise<void> {
 
     const recording = hookRecorder.active;
     const current = new Set(previewPlaybackArms());
+    const mixPlaying = !recording && overdubLoopPlaying && !!hookPlayback?.isOverdubMonitor;
+    if (mixPlaying) {
+      for (const l of mtSession.layers) {
+        if (l.kind !== 'mix' && !backingMutedArms.has(l.kind as LayerArm)) {
+          current.add(l.kind as LayerArm);
+        }
+      }
+    }
     const wasPlayingThis = current.has(arm) && hookPlayback?.pausedAt === null;
 
     if (current.has(arm)) {
@@ -2052,7 +2060,7 @@ async function init(): Promise<void> {
     hooksBackdrop.setAttribute('aria-hidden', 'true');
     document.body.classList.remove('hooks-drawer-open');
     hooksToggle.setAttribute('aria-expanded', 'false');
-    hooksToggle.textContent = 'Today\u2019s hooks ▾';
+    hooksToggle.textContent = 'Today\u2019s jingles ▾';
   }
 
   function openHooksDrawer(): void {
@@ -2063,7 +2071,7 @@ async function init(): Promise<void> {
     hooksBackdrop.setAttribute('aria-hidden', 'false');
     document.body.classList.add('hooks-drawer-open');
     hooksToggle.setAttribute('aria-expanded', 'true');
-    hooksToggle.textContent = 'Today\u2019s hooks ▴';
+    hooksToggle.textContent = 'Today\u2019s jingles ▴';
   }
 
   hooksToggle.addEventListener('click', () => {
