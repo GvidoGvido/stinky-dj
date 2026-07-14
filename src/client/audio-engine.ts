@@ -44,6 +44,8 @@ export class AudioEngine {
   private drumFxSend: GainNode | null = null;
   private playbackFxSendRestore: { synth: number; bass: number; drum: number; voiceDelay: number; voiceReverb: number } | null =
     null;
+  /** Drum sources scheduled on the audio timeline — tracked so pause/stop can cancel pending hits. */
+  private scheduledDrums = new Set<AudioScheduledSourceNode>();
 
   ensure(): AudioContext {
     if (this.ctx) return this.ctx;
@@ -375,6 +377,31 @@ export class AudioEngine {
     for (const id of [...this.liveVoices.keys()]) this.noteOff(id);
   }
 
+  /** Register a drum source so its scheduled hit can be cancelled later. */
+  private trackDrum(node: AudioScheduledSourceNode): void {
+    this.scheduledDrums.add(node);
+    node.addEventListener('ended', () => {
+      this.scheduledDrums.delete(node);
+    });
+  }
+
+  /**
+   * Cancel drum hits already scheduled on the audio timeline. Web Audio events
+   * can't be un-scheduled by clearing timers, so pausing/stopping playback must
+   * stop the source nodes directly — otherwise the pending hits fire late and
+   * double up against re-scheduled hits on resume (audible drum glitch).
+   */
+  stopScheduledDrums(): void {
+    for (const node of this.scheduledDrums) {
+      try {
+        node.stop();
+      } catch {
+        /* already stopped */
+      }
+    }
+    this.scheduledDrums.clear();
+  }
+
   /** Clear delay feedback buildup between looped hook playbacks. */
   resetDelayFeedback(): void {
     if (!this.ctx || !this.delayFeedback) return;
@@ -401,6 +428,9 @@ export class AudioEngine {
   mutePlaybackStems(): void {
     const ctx = this.ensure();
     const t = ctx.currentTime;
+    // Drums live on the audio timeline (not the voice map), so muting the bus
+    // isn't enough — cancel the pending hits or they double up on resume.
+    this.stopScheduledDrums();
     for (const bus of [this.synthBus, this.bassBus, this.drumBus, this.voiceBus]) {
       if (!bus) continue;
       bus.gain.cancelScheduledValues(t);
@@ -445,6 +475,7 @@ export class AudioEngine {
     hasVoice?: boolean;
   }): void {
     this.noteOffAll();
+    this.stopScheduledDrums();
     this.stopVoice();
     this.flushFxTails();
     if (!this.playbackMixRestore) {
@@ -527,6 +558,7 @@ export class AudioEngine {
     const ctx = this.ctx;
     const t = ctx ? ctx.currentTime : 0;
     this.noteOffAll();
+    this.stopScheduledDrums();
     this.stopVoice();
     for (const bus of [this.synthBus, this.bassBus, this.drumBus, this.voiceBus]) {
       if (!bus) continue;
@@ -543,6 +575,7 @@ export class AudioEngine {
 
   endHookPlayback(): void {
     this.noteOffAll();
+    this.stopScheduledDrums();
     this.stopVoice();
     if (this.wobbleGain) this.wobbleGain.gain.value = 6.0;
     if (this.playbackFxSendRestore) {
@@ -782,6 +815,7 @@ export class AudioEngine {
       g.connect(bus);
       osc.start(t0);
       osc.stop(t0 + kickDecay + 0.02);
+      this.trackDrum(osc);
 
       // Acoustic kicks have a beater click on top of the thump
       if (kit === 'classic') {
@@ -800,6 +834,7 @@ export class AudioEngine {
         cg.connect(bus);
         click.start(t0);
         click.stop(t0 + 0.02);
+        this.trackDrum(click);
       }
       return;
     }
@@ -818,6 +853,7 @@ export class AudioEngine {
       bodyG.connect(bus);
       body.start(t0);
       body.stop(t0 + 0.14);
+      this.trackDrum(body);
       // The noise part continues below with classic-tuned filter values.
     }
 
@@ -878,6 +914,7 @@ export class AudioEngine {
     g.connect(bus);
     src.start(t0);
     src.stop(t0 + len + 0.05);
+    this.trackDrum(src);
   }
 
   async preloadVoice(track: VoiceTrack): Promise<void> {
@@ -909,6 +946,9 @@ export class AudioEngine {
     const ctx = this.ensure();
     const bus = this.voiceBus;
     if (!bus || !this.voiceBuffer) return;
+    // Never leave a previous source running — otherwise a resume that both
+    // re-schedules and resumes the voice would double it up.
+    this.stopVoiceSource();
     const src = ctx.createBufferSource();
     src.buffer = this.voiceBuffer;
     src.connect(bus);

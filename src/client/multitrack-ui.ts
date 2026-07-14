@@ -166,8 +166,8 @@ export function mountMultitrackPanel(opts: MultitrackPanelOptions): {
     atMaxLayers: boolean;
     reRecordArm: LayerArm | null;
     expanded: boolean;
-    previewPlayingArm: LayerArm | null;
-    previewPausedArm: LayerArm | null;
+    previewPlayingArms: LayerArm[];
+    previewPausedArms: LayerArm[];
     canSubmit: boolean;
     backingTracks: BackingTrackChip[];
     showBackingStrip: boolean;
@@ -235,8 +235,8 @@ export function mountMultitrackPanel(opts: MultitrackPanelOptions): {
     atMaxLayers: boolean;
     reRecordArm: LayerArm | null;
     expanded: boolean;
-    previewPlayingArm: LayerArm | null;
-    previewPausedArm: LayerArm | null;
+    previewPlayingArms: LayerArm[];
+    previewPausedArms: LayerArm[];
     canSubmit: boolean;
     backingTracks: BackingTrackChip[];
     showBackingStrip: boolean;
@@ -251,8 +251,8 @@ export function mountMultitrackPanel(opts: MultitrackPanelOptions): {
       atMaxLayers,
       reRecordArm,
       expanded,
-      previewPlayingArm,
-      previewPausedArm,
+      previewPlayingArms,
+      previewPausedArms,
       canSubmit,
       backingTracks,
       showBackingStrip,
@@ -415,8 +415,8 @@ export function mountMultitrackPanel(opts: MultitrackPanelOptions): {
       const isActive = arm === slotArm;
       const isReRecord = reRecordArm === slotArm;
       const isRecordingNow = recording && arm === slotArm;
-      const isPlaying = previewPlayingArm === slotArm;
-      const isPaused = previewPausedArm === slotArm;
+      const isPlaying = previewPlayingArms.includes(slotArm);
+      const isPaused = previewPausedArms.includes(slotArm);
 
       const card = document.createElement('div');
       card.className = `mt-slot mt-slot-${meta.css}${layer ? ' has-layer' : ' empty'}${isActive ? ' active' : ''}${isReRecord ? ' re-recording' : ''}${isRecordingNow ? ' recording-now' : ''}`;

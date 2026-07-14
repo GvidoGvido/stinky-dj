@@ -7,6 +7,7 @@ import type {
   HookPreview,
   InitResponse,
   MixSettings,
+  NoteEvent,
   PlayerState,
 } from '../shared/api';
 import { MAX_RECORD_SEC } from '../shared/api';
@@ -253,7 +254,8 @@ async function init(): Promise<void> {
     usingTransport: boolean;
     reviewUi: boolean;
     isOverdubMonitor?: boolean;
-    previewArm?: LayerArm | null;
+    /** Per-track slot preview: the layers currently playing together (synced). */
+    previewArms?: LayerArm[];
   };
 
   type MultitrackSessionLocal = MultitrackSession;
@@ -332,12 +334,6 @@ async function init(): Promise<void> {
     );
   }
 
-  function drumPatternForLayer(session: MultitrackSessionLocal, layer: RecordedLayer): HookData['drum']['pattern'] {
-    if (layer.kind === 'drums') return layer.drumPattern ?? session.pattern;
-    return emptyDrumPattern();
-  }
-
-
   /** Capture sequencer hits during drums-layer and full-take recording. */
   function shouldCaptureTransportDrums(): boolean {
     if (!hookRecorder.active) return false;
@@ -395,47 +391,58 @@ async function init(): Promise<void> {
     session.loopSec = Math.min(MAX_RECORD_SEC, next);
   }
 
-  function buildHookFromLayer(session: MultitrackSessionLocal, layer: RecordedLayer): HookData {
-    const drumPattern = drumPatternForLayer(session, layer);
-    const drum: HookData['drum'] = {
-      swing,
-      pattern: drumPattern,
-      gain: drumGain,
-      kit: drumKit,
-    };
-    if (
-      layer.drumHits.length &&
-      !patternHasSteps({ pattern: drumPattern, swing, gain: drumGain, kit: drumKit })
-    ) {
-      drum.hits = layer.drumHits;
+  /** Build a hook from a chosen set of layers (drums only included when the drums arm is selected). */
+  function buildHookFromArms(session: MultitrackSessionLocal, arms: LayerArm[]): HookData {
+    const armSet = new Set(arms);
+    const selected = session.layers.filter(
+      (l) => l.kind !== 'mix' && armSet.has(l.kind as LayerArm),
+    );
+    const notes: NoteEvent[] = [];
+    const bassNotes: NoteEvent[] = [];
+    const drumHits: DrumHitEvent[] = [];
+    let drumPattern = emptyDrumPattern();
+    for (const layer of selected) {
+      notes.push(...layer.notes);
+      bassNotes.push(...layer.bassNotes);
+      if (layer.kind === 'drums') {
+        if (layer.drumPattern) drumPattern = mergeDrumPatterns(drumPattern, layer.drumPattern);
+        drumHits.push(...layer.drumHits);
+      }
     }
+    if (armSet.has('drums') && !patternHasSteps({ pattern: drumPattern, swing, gain: drumGain, kit: drumKit })) {
+      drumPattern = mergeDrumPatterns(drumPattern, session.pattern);
+    }
+    const usePattern = patternHasSteps({ pattern: drumPattern, swing, gain: drumGain, kit: drumKit });
     return {
       bpm,
       stepsPerBar,
       bars,
       synth: { preset, detune, tone, gain: leadGain },
-      bass: { preset: bassPreset, gain: bassGain, notes: layer.bassNotes },
-      drum,
+      bass: { preset: bassPreset, gain: bassGain, notes: bassNotes },
+      drum: {
+        swing,
+        pattern: drumPattern,
+        gain: drumGain,
+        kit: drumKit,
+        ...(!usePattern && drumHits.length ? { hits: drumHits } : {}),
+      },
       mix,
-      notes: layer.notes,
-      recordedSec: layer.durationSec,
-      ...(layer.voice ? { voice: layer.voice } : {}),
+      notes,
+      recordedSec: session.loopSec,
     };
   }
 
-  function previewPlaybackArm(): LayerArm | null {
-    if (!hookPlayback?.previewArm || hookPlayback.isOverdubMonitor || hookPlayback.reviewUi) return null;
-    return hookPlayback.previewArm;
+  /** Layers currently playing together in a per-track slot preview (empty for mix/review/none). */
+  function previewPlaybackArms(): LayerArm[] {
+    if (!hookPlayback?.previewArms || hookPlayback.isOverdubMonitor || hookPlayback.reviewUi) return [];
+    return hookPlayback.previewArms;
   }
 
-  function isPreviewPlaying(arm: LayerArm): boolean {
-    return previewPlaybackArm() === arm && hookPlayback!.pausedAt === null;
-  }
-
-  function isPreviewPaused(arm: LayerArm): boolean {
-    return previewPlaybackArm() === arm && hookPlayback!.pausedAt !== null;
-  }
-
+  /**
+   * Per-track ▶ toggles that layer in/out of a single synchronized preview so
+   * drums, keys, and bass can play together. While recording we keep the old
+   * single-layer monitor behaviour so the take flow is untouched.
+   */
   function toggleLayerPreview(arm: LayerArm): void {
     if (!mtSession) return;
     if (hookRecorder.active && arm === layerArm) {
@@ -447,30 +454,52 @@ async function init(): Promise<void> {
       toast(`No ${layerArmLabel(arm).toLowerCase()} layer yet`);
       return;
     }
-    if (isPreviewPlaying(arm)) {
-      pauseHookPlayback();
+
+    const recording = hookRecorder.active;
+    const current = new Set(previewPlaybackArms());
+    const wasPlayingThis = current.has(arm) && hookPlayback?.pausedAt === null;
+
+    if (current.has(arm)) {
+      current.delete(arm);
+    } else {
+      if (recording) current.clear(); // solo the monitored layer while recording
+      current.add(arm);
+    }
+
+    const arms = mtSession.layers
+      .map((l) => l.kind)
+      .filter((k): k is LayerArm => k !== 'mix' && current.has(k as LayerArm));
+
+    if (arms.length === 0) {
+      // Turning the last track off stops the preview without disturbing the take.
+      if (recording) stopMonitorPlaybackOnly();
+      else {
+        stopOverdubLoopPlayback();
+        finishHookPlayback();
+      }
       renderMultitrackPanel();
+      setDialogue(wasPlayingThis ? 'DJ: Preview stopped.' : 'DJ: Nothing selected to play.');
       return;
     }
-    if (isPreviewPaused(arm)) {
-      resumeHookPlayback();
-      renderMultitrackPanel();
-      return;
-    }
-    if (!hookRecorder.active) {
+
+    // While recording, playHook's monitor path tears down the previous monitor;
+    // otherwise stop any mix loop / preview before starting the new synced set.
+    if (!recording) {
       stopOverdubLoopPlayback();
       finishHookPlayback();
     }
-    void playHook(buildHookFromLayer(mtSession, layer), {
+
+    void playHook(buildHookFromArms(mtSession, arms), {
       restorePattern: false,
       reviewUi: false,
       isOverdubMonitor: false,
-      previewArm: arm,
+      previewArms: arms,
     });
+    const names = arms.map((a) => layerArmLabel(a)).join(' + ');
     setDialogue(
-      hookRecorder.active
-        ? `DJ: Backing — ${layerArmLabel(arm)}. Keep recording your ${layerArmLabel(layerArm).toLowerCase()} take.`
-        : `DJ: Playing ${layerArmLabel(arm)} — tap ⏸ to pause.`,
+      recording
+        ? `DJ: Backing — ${names}. Keep recording your ${layerArmLabel(layerArm).toLowerCase()} take.`
+        : `DJ: Playing ${names} — tap a track’s ▶ to add or remove it.`,
     );
   }
 
@@ -631,8 +660,8 @@ async function init(): Promise<void> {
       atMaxLayers: isAtMaxLayers() && !reRecordArm,
       reRecordArm,
       expanded: mtPanelExpanded,
-      previewPlayingArm: previewPlaybackArm() && hookPlayback?.pausedAt === null ? previewPlaybackArm() : null,
-      previewPausedArm: previewPlaybackArm() && hookPlayback?.pausedAt !== null ? previewPlaybackArm() : null,
+      previewPlayingArms: hookPlayback?.pausedAt === null ? previewPlaybackArms() : [],
+      previewPausedArms: hookPlayback?.pausedAt !== null ? previewPlaybackArms() : [],
       canSubmit: !!mtSession && mtSession.layers.length > 0 && !hookRecorder.active,
       backingTracks,
       showBackingStrip: backingTracks.length > 0,
@@ -955,8 +984,8 @@ async function init(): Promise<void> {
 
   function stopMonitorPlaybackOnly(): void {
     if (!hookPlayback) return;
-    const { endTimerId, usingTransport, isOverdubMonitor, previewArm } = hookPlayback;
-    if (!isOverdubMonitor && !previewArm) {
+    const { endTimerId, usingTransport, isOverdubMonitor, previewArms } = hookPlayback;
+    if (!isOverdubMonitor && !previewArms?.length) {
       finishHookPlayback();
       return;
     }
@@ -979,7 +1008,7 @@ async function init(): Promise<void> {
 
   function finishHookPlayback(opts?: { restartLiveTransport?: boolean }): void {
     if (!hookPlayback) return;
-    const { restorePattern: shouldRestore, patternSnap, usingTransport, endTimerId, isOverdubMonitor, previewArm, pausedAt } =
+    const { restorePattern: shouldRestore, patternSnap, usingTransport, endTimerId, isOverdubMonitor, previewArms, pausedAt } =
       hookPlayback;
     const shouldRestartOverdub =
       !!isOverdubMonitor &&
@@ -1011,7 +1040,7 @@ async function init(): Promise<void> {
     if (shouldRestartOverdub) {
       overdubLoopPlaying = true;
       window.setTimeout(() => startOverdubLoop(), 180);
-    } else if (isOverdubMonitor || previewArm) {
+    } else if (isOverdubMonitor || previewArms?.length) {
       overdubLoopPlaying = false;
       renderMultitrackPanel();
     }
@@ -1824,14 +1853,14 @@ async function init(): Promise<void> {
       restorePattern?: boolean;
       reviewUi?: boolean;
       isOverdubMonitor?: boolean;
-      previewArm?: LayerArm | null;
+      previewArms?: LayerArm[];
     },
   ): Promise<void> {
     const restorePatternAfter = opts?.restorePattern ?? true;
     const reviewUi = opts?.reviewUi ?? false;
     const isOverdubMonitor = opts?.isOverdubMonitor ?? false;
-    const previewArm = opts?.previewArm ?? null;
-    const monitorDuringRec = hookRecorder.active && (isOverdubMonitor || !!previewArm);
+    const previewArms = opts?.previewArms ?? [];
+    const monitorDuringRec = hookRecorder.active && (isOverdubMonitor || previewArms.length > 0);
     if (monitorDuringRec) {
       stopMonitorPlaybackOnly();
     } else {
@@ -1851,9 +1880,9 @@ async function init(): Promise<void> {
       usingTransport: false,
       reviewUi,
       isOverdubMonitor,
-      previewArm,
+      previewArms,
     };
-    if (previewArm || isOverdubMonitor) renderMultitrackPanel();
+    if (previewArms.length || isOverdubMonitor) renderMultitrackPanel();
     syncInstrumentsBlocked();
 
     await audio.resume();
@@ -1900,7 +1929,7 @@ async function init(): Promise<void> {
     }
     scheduleHookEndTimer();
     if (reviewUi) setReviewPlayButton('pause');
-    if (previewArm || isOverdubMonitor) renderMultitrackPanel();
+    if (previewArms.length || isOverdubMonitor) renderMultitrackPanel();
     updateGearStatus();
   }
 
