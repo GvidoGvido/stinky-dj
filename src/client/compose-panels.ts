@@ -27,20 +27,25 @@ export function openComposeArm(
   nodes: ComposePanelNodes,
   mounts: ComposePanelMounts,
 ): void {
-  setNodeOpen(nodes.drums, arm === 'drums');
-  setNodeOpen(nodes.keys, arm === 'keys' || arm === 'bass');
+  const wantDrums = arm === 'drums';
+  const wantKeys = arm === 'keys' || arm === 'bass';
+
+  if (wantDrums) {
+    setNodeOpen(nodes.drums, true);
+    mounts.setDrumsVisible(true);
+  }
+  if (wantKeys) {
+    setNodeOpen(nodes.keys, true);
+    mounts.setKeysVisible(true);
+    mounts.setKeysFocus(arm === 'keys' ? 'melody' : 'bass');
+  }
+
   nodes.toolbar.classList.remove('hidden');
-
-  mounts.setDrumsVisible(arm === 'drums');
-  mounts.setKeysVisible(arm === 'keys' || arm === 'bass');
-  mounts.setKeysFocus(arm === 'keys' ? 'melody' : arm === 'bass' ? 'bass' : 'all');
-
   nodes.composeRoot.dataset.activeArm = arm;
   nodes.stack.dataset.active = 'true';
 
   requestAnimationFrame(() => {
-    const target =
-      arm === 'drums' ? nodes.drums : arm === 'keys' || arm === 'bass' ? nodes.keys : null;
+    const target = wantDrums ? nodes.drums : wantKeys ? nodes.keys : null;
     if (target && !target.classList.contains('hidden')) {
       target.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }

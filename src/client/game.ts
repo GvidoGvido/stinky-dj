@@ -2239,35 +2239,22 @@ async function init(): Promise<void> {
   });
 
   consoleToggle.addEventListener('click', () => {
-    const opening = !touchConsole!.isVisible();
-    setConsoleOpen(opening);
-    if (opening) {
-      setKeysOpen(false);
-      setDrumsOpen(false);
-    }
+    setConsoleOpen(!touchConsole!.isVisible());
   });
   drumsToggle.addEventListener('click', () => {
-    if (useMultitrackLayerPicker()) {
+    const visible = touchDrums!.isVisible();
+    if (useMultitrackLayerPicker() && !hookRecorder.active && (!visible || layerArm !== 'drums')) {
       switchMultitrackLayer('drums');
-      return;
-    }
-    const opening = !touchDrums!.isVisible();
-    setDrumsOpen(opening);
-    if (opening) {
-      setKeysOpen(false);
-      setConsoleOpen(false);
+    } else {
+      setDrumsOpen(!visible);
     }
   });
   keysToggle.addEventListener('click', () => {
-    if (useMultitrackLayerPicker()) {
+    const visible = touchKeysMount!.isVisible();
+    if (useMultitrackLayerPicker() && !hookRecorder.active && (!visible || layerArm !== 'keys')) {
       switchMultitrackLayer('keys');
-      return;
-    }
-    const opening = !touchKeysMount!.isVisible();
-    setKeysOpen(opening);
-    if (opening) {
-      setDrumsOpen(false);
-      setConsoleOpen(false);
+    } else {
+      setKeysOpen(!visible);
     }
   });
 
