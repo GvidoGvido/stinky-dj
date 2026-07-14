@@ -21,7 +21,7 @@
     "items": [
       {
         "label": "Create a new Tunebox post",
-        "description": "Name today’s PS1 mystery album sleeve",
+        "description": "Start today’s Tunebox round",
         "location": "subreddit",
         "forUserType": "moderator",
         "endpoint": "/internal/menu/post-create"
