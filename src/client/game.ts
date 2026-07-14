@@ -254,7 +254,6 @@ async function init(): Promise<void> {
     usingTransport: boolean;
     reviewUi: boolean;
     isOverdubMonitor?: boolean;
-    /** Per-track slot preview: the layers currently playing together (synced). */
     previewArms?: LayerArm[];
   };
 
@@ -381,8 +380,7 @@ async function init(): Promise<void> {
   }
 
   function sessionRecordCapSec(): number {
-    if (!mtSession) return MAX_RECORD_SEC;
-    return Math.min(MAX_RECORD_SEC, Math.max(mtSession.loopSec, DEFAULT_SESSION_SEC));
+    return MAX_RECORD_SEC;
   }
 
   function updateSessionLoopSec(session: MultitrackSessionLocal, passSec?: number): void {
@@ -482,8 +480,6 @@ async function init(): Promise<void> {
       return;
     }
 
-    // While recording, playHook's monitor path tears down the previous monitor;
-    // otherwise stop any mix loop / preview before starting the new synced set.
     if (!recording) {
       stopOverdubLoopPlayback();
       finishHookPlayback();

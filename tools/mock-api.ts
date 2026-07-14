@@ -67,7 +67,7 @@ function listHooksTop(roundId: string, username: string) {
   });
 
   entries.sort((a, b) => (b.upvotes - a.upvotes) || a.hookId.localeCompare(b.hookId));
-  return entries.slice(0, 12);
+  return entries.slice(0, 100);
 }
 
 function getPlayerState(roundId: string, username: string) {

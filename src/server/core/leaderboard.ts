@@ -20,86 +20,46 @@ type StoredHook = {
   createdAt: number;
 };
 
+type HookMeta = {
+  a: string;
+  t?: string;
+};
+
+const V = 'v2';
+
 function hooksKey(roundId: string): string {
-  return `round:${roundId}:hooks`;
+  return `round:${roundId}:${V}:hooks`;
 }
-
-function hookByUserKey(roundId: string): string {
-  return `round:${roundId}:hookByUser`;
+function metaKey(roundId: string): string {
+  return `round:${roundId}:${V}:meta`;
 }
-
+function byUserKey(roundId: string): string {
+  return `round:${roundId}:${V}:byUser`;
+}
 function votesKey(roundId: string): string {
-  return `round:${roundId}:votes`;
+  return `round:${roundId}:${V}:votes`;
+}
+function scoresKey(roundId: string): string {
+  return `round:${roundId}:${V}:scores`;
 }
 
-function voteCountsKey(roundId: string): string {
-  return `round:${roundId}:voteCounts`;
-}
-
-const MAX_HOOKS = 500;
-const MAX_LIST = 12;
-
-function toJson<T>(value: T): string {
-  return JSON.stringify(value);
-}
-
-async function loadJson<T>(key: string, fallback: T): Promise<T> {
-  const raw = await redis.get(key);
-  if (!raw) return fallback;
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
-  }
-}
-
-export async function getPlayerState(roundId: string, username: string): Promise<PlayerState> {
-  const [byUser, votes] = await Promise.all([
-    loadJson<Record<string, string>>(hookByUserKey(roundId), {}),
-    loadJson<Record<string, string>>(votesKey(roundId), {}),
-  ]);
-  return {
-    username,
-    myHookId: byUser[username] ?? null,
-    myVoteHookId: votes[username] ?? null,
-  };
-}
-
-export async function listHooksTop(roundId: string, username: string): Promise<HookPreview[]> {
-  const [hooks, voteCounts, byUser, votes] = await Promise.all([
-    loadJson<Record<string, StoredHook>>(hooksKey(roundId), {}),
-    loadJson<Record<string, number>>(voteCountsKey(roundId), {}),
-    loadJson<Record<string, string>>(hookByUserKey(roundId), {}),
-    loadJson<Record<string, string>>(votesKey(roundId), {}),
-  ]);
-
-  const entries: HookPreview[] = Object.values(hooks).map((h) => {
-    const upvotes = voteCounts[h.hookId] ?? 0;
-    const isMine = byUser[username] === h.hookId;
-    const isVoted = votes[username] === h.hookId;
-    return {
-      hookId: h.hookId,
-      authorUsername: h.authorUsername,
-      ...(h.hook.title?.trim() ? { title: h.hook.title.trim() } : {}),
-      upvotes,
-      isMine,
-      isVoted,
-    };
-  });
-
-  // Ranking in-app is based on upvotes only (ties are shown as ties; we still need a stable order).
-  entries.sort((a, b) => (b.upvotes - a.upvotes) || a.hookId.localeCompare(b.hookId));
-
-  return entries.slice(0, MAX_LIST);
-}
-
-function deterministicHookId(roundId: string, username: string): string {
-  // Stable per-user per-round.
-  return `hook_${seedFromString(`${roundId}|${username}`).toString(16)}`;
-}
+const LIST_LIMIT = 100;
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
+}
+
+function deterministicHookId(roundId: string, username: string): string {
+  return `hook_${seedFromString(`${roundId}|${username}`).toString(16)}`;
+}
+
+function parseJson<T>(raw: string | null | undefined): T | null {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
 }
 
 function sanitizeHook(hook: HookData): HookData {
@@ -175,14 +135,12 @@ function sanitizeHook(hook: HookData): HookData {
     v: clamp(n.v ?? 0.8, 0, 1),
   });
 
-  // Melody notes — exclude legacy bass-flagged entries (they migrate to bass track).
   const melodyNotes = notesRaw
     .filter((n) => typeof n?.t === 'number' && typeof n?.d === 'number' && typeof n?.n === 'number')
     .filter((n) => n.bass !== true)
     .map((n) => cleanNote(n, 48, 84))
     .slice(0, 192);
 
-  // Bass track + legacy bass-flagged melody notes.
   const legacyBass = notesRaw
     .filter((n) => n.bass === true && typeof n?.t === 'number' && typeof n?.d === 'number' && typeof n?.n === 'number')
     .map((n) => cleanNote(n, 24, 60));
@@ -221,47 +179,82 @@ function sanitizeHook(hook: HookData): HookData {
   };
 }
 
-export async function submitHook(roundId: string, username: string, hook: HookData): Promise<ActionResponse> {
-  const cleaned = sanitizeHook(hook);
+export async function getPlayerState(roundId: string, username: string): Promise<PlayerState> {
+  const [myHookId, myVoteHookId] = await Promise.all([
+    redis.hGet(byUserKey(roundId), username),
+    redis.hGet(votesKey(roundId), username),
+  ]);
+  return {
+    username,
+    myHookId: myHookId ?? null,
+    myVoteHookId: myVoteHookId ?? null,
+  };
+}
 
-  const [hooks, byUser, voteCounts] = await Promise.all([
-    loadJson<Record<string, StoredHook>>(hooksKey(roundId), {}),
-    loadJson<Record<string, string>>(hookByUserKey(roundId), {}),
-    loadJson<Record<string, number>>(voteCountsKey(roundId), {}),
+export async function listHooksTop(roundId: string, username: string): Promise<HookPreview[]> {
+  const ranked = await redis.zRange(scoresKey(roundId), 0, LIST_LIMIT - 1, {
+    reverse: true,
+    by: 'rank',
+  });
+  if (ranked.length === 0) return [];
+
+  const hookIds = ranked.map((r) => r.member);
+  const [metaRaw, myHookId, myVoteHookId] = await Promise.all([
+    redis.hMGet(metaKey(roundId), hookIds),
+    redis.hGet(byUserKey(roundId), username),
+    redis.hGet(votesKey(roundId), username),
   ]);
 
-  if (byUser[username]) {
+  const previews: HookPreview[] = [];
+  ranked.forEach((entry, i) => {
+    const meta = parseJson<HookMeta>(metaRaw[i]);
+    if (!meta) return;
+    const title = meta.t?.trim();
+    previews.push({
+      hookId: entry.member,
+      authorUsername: meta.a,
+      ...(title ? { title } : {}),
+      upvotes: Math.max(0, Math.round(entry.score)),
+      isMine: entry.member === myHookId,
+      isVoted: entry.member === myVoteHookId,
+    });
+  });
+
+  return previews;
+}
+
+export async function submitHook(roundId: string, username: string, hook: HookData): Promise<ActionResponse> {
+  const cleaned = sanitizeHook(hook);
+  const hookId = deterministicHookId(roundId, username);
+
+  const claimed = await redis.hSetNX(byUserKey(roundId), username, hookId);
+  if (claimed === 0) {
     throw new Error('You already submitted a hook for this round');
   }
 
-  const hookId = deterministicHookId(roundId, username);
-  const now = Date.now();
   const stored: StoredHook = {
     hookId,
     hook: cleaned,
     authorUsername: username,
-    createdAt: now,
+    createdAt: Date.now(),
   };
+  const meta: HookMeta = { a: username, ...(cleaned.title ? { t: cleaned.title } : {}) };
 
-  const nextHooks = { ...hooks, [hookId]: stored };
-  const values = Object.values(nextHooks);
-  if (values.length > MAX_HOOKS) {
-    // Trim oldest hooks to keep redis payload small.
-    values.sort((a, b) => a.createdAt - b.createdAt);
-    const trimmed = values.slice(values.length - MAX_HOOKS);
-    const rebuilt: Record<string, StoredHook> = {};
-    for (const h of trimmed) rebuilt[h.hookId] = h;
-    await redis.set(hooksKey(roundId), toJson(rebuilt));
-  } else {
-    await redis.set(hooksKey(roundId), toJson(nextHooks));
+  try {
+    await Promise.all([
+      redis.hSet(hooksKey(roundId), { [hookId]: JSON.stringify(stored) }),
+      redis.hSet(metaKey(roundId), { [hookId]: JSON.stringify(meta) }),
+      redis.zAdd(scoresKey(roundId), { member: hookId, score: 0 }),
+    ]);
+  } catch (error) {
+    await redis.hDel(byUserKey(roundId), [username]).catch(() => {});
+    throw error;
   }
 
-  await redis.set(hookByUserKey(roundId), toJson({ ...byUser, [username]: hookId }));
-  await redis.set(voteCountsKey(roundId), toJson({ ...voteCounts, [hookId]: voteCounts[hookId] ?? 0 }));
-
-  // Update UI immediately with latest top list.
-  const player = await getPlayerState(roundId, username);
-  const hooksTop = await listHooksTop(roundId, username);
+  const [player, hooksTop] = await Promise.all([
+    getPlayerState(roundId, username),
+    listHooksTop(roundId, username),
+  ]);
   return {
     type: 'action',
     player,
@@ -272,41 +265,27 @@ export async function submitHook(roundId: string, username: string, hook: HookDa
 }
 
 export async function vote(roundId: string, username: string, hookId: string): Promise<ActionResponse> {
-  const [hooks, votes, voteCounts] = await Promise.all([
-    loadJson<Record<string, StoredHook>>(hooksKey(roundId), {}),
-    loadJson<Record<string, string>>(votesKey(roundId), {}),
-    loadJson<Record<string, number>>(voteCountsKey(roundId), {}),
-  ]);
-
-  if (!hooks[hookId]) {
+  const targetScore = await redis.zScore(scoresKey(roundId), hookId);
+  if (targetScore === undefined) {
     throw new Error('Unknown hook');
   }
 
-  const prev = votes[username] ?? null;
-  if (prev === hookId) {
-    const player = await getPlayerState(roundId, username);
-    const hooksTop = await listHooksTop(roundId, username);
-    return {
-      type: 'action',
-      player,
-      hooks: hooksTop,
-      applause: false,
-      prevReveal: null,
-    };
+  const prev = (await redis.hGet(votesKey(roundId), username)) ?? null;
+  if (prev !== hookId) {
+    await redis.hSet(votesKey(roundId), { [username]: hookId });
+    await redis.zIncrBy(scoresKey(roundId), hookId, 1);
+    if (prev) {
+      const prevScore = await redis.zScore(scoresKey(roundId), prev);
+      if (prevScore !== undefined && prevScore > 0) {
+        await redis.zIncrBy(scoresKey(roundId), prev, -1);
+      }
+    }
   }
 
-  const nextVotes = { ...votes, [username]: hookId };
-  const nextCounts = { ...voteCounts };
-  if (prev) nextCounts[prev] = Math.max(0, (nextCounts[prev] ?? 0) - 1);
-  nextCounts[hookId] = (nextCounts[hookId] ?? 0) + 1;
-
-  await Promise.all([
-    redis.set(votesKey(roundId), toJson(nextVotes)),
-    redis.set(voteCountsKey(roundId), toJson(nextCounts)),
+  const [player, hooksTop] = await Promise.all([
+    getPlayerState(roundId, username),
+    listHooksTop(roundId, username),
   ]);
-
-  const player = await getPlayerState(roundId, username);
-  const hooksTop = await listHooksTop(roundId, username);
   return {
     type: 'action',
     player,
@@ -320,7 +299,6 @@ function deterministicSample3<T>(items: T[], seed: number): T[] {
   if (items.length <= 3) return items.slice();
   const rand = mulberry32(seed);
 
-  // Deterministic shuffle then take 3.
   const arr = items.slice();
   for (let i = arr.length - 1; i > 0; i--) {
     const j = Math.floor(rand() * (i + 1));
@@ -330,36 +308,34 @@ function deterministicSample3<T>(items: T[], seed: number): T[] {
 }
 
 export async function computePrevReveal(prevRoundId: string): Promise<RevealState | null> {
-  const hooks = await loadJson<Record<string, StoredHook>>(hooksKey(prevRoundId), {});
-  if (Object.keys(hooks).length === 0) return null;
+  const ranked = await redis.zRange(scoresKey(prevRoundId), 0, -1, {
+    reverse: true,
+    by: 'rank',
+  });
+  if (ranked.length === 0) return null;
 
-  const voteCounts = await loadJson<Record<string, number>>(voteCountsKey(prevRoundId), {});
-  const entries = Object.values(hooks).map((h) => ({
-    hookId: h.hookId,
-    authorUsername: h.authorUsername,
-    upvotes: voteCounts[h.hookId] ?? 0,
+  const topUpvotes = Math.max(0, Math.round(ranked[0]!.score));
+  const topEntries = ranked.filter((e) => Math.round(e.score) === topUpvotes);
+  const topIds = topEntries.map((e) => e.member);
+  const metaRaw = await redis.hMGet(metaKey(prevRoundId), topIds);
+
+  const winners = topEntries.map((entry, i) => ({
+    hookId: entry.member,
+    authorUsername: parseJson<HookMeta>(metaRaw[i])?.a ?? 'unknown',
+    upvotes: topUpvotes,
   }));
 
-  const topUpvotes = entries.reduce((m, e) => Math.max(m, e.upvotes), 0);
-  const top = entries.filter((e) => e.upvotes === topUpvotes);
-
   const coWinners =
-    top.length <= 3
-      ? top
-      : deterministicSample3(top, seedFromString(prevRoundId));
+    winners.length <= 3 ? winners : deterministicSample3(winners, seedFromString(prevRoundId));
 
   return {
     roundId: prevRoundId,
     topUpvotes,
-    coWinners: coWinners.map((e) => ({
-      hookId: e.hookId,
-      authorUsername: e.authorUsername,
-      upvotes: e.upvotes,
-    })),
+    coWinners,
   };
 }
 
 export async function getHook(roundId: string, hookId: string): Promise<HookData | null> {
-  const hooks = await loadJson<Record<string, StoredHook>>(hooksKey(roundId), {});
-  return hooks[hookId]?.hook ?? null;
+  const raw = await redis.hGet(hooksKey(roundId), hookId);
+  return parseJson<StoredHook>(raw)?.hook ?? null;
 }

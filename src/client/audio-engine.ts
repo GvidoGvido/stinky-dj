@@ -377,7 +377,6 @@ export class AudioEngine {
     for (const id of [...this.liveVoices.keys()]) this.noteOff(id);
   }
 
-  /** Register a drum source so its scheduled hit can be cancelled later. */
   private trackDrum(node: AudioScheduledSourceNode): void {
     this.scheduledDrums.add(node);
     node.addEventListener('ended', () => {
@@ -385,12 +384,6 @@ export class AudioEngine {
     });
   }
 
-  /**
-   * Cancel drum hits already scheduled on the audio timeline. Web Audio events
-   * can't be un-scheduled by clearing timers, so pausing/stopping playback must
-   * stop the source nodes directly — otherwise the pending hits fire late and
-   * double up against re-scheduled hits on resume (audible drum glitch).
-   */
   stopScheduledDrums(): void {
     for (const node of this.scheduledDrums) {
       try {
@@ -428,8 +421,6 @@ export class AudioEngine {
   mutePlaybackStems(): void {
     const ctx = this.ensure();
     const t = ctx.currentTime;
-    // Drums live on the audio timeline (not the voice map), so muting the bus
-    // isn't enough — cancel the pending hits or they double up on resume.
     this.stopScheduledDrums();
     for (const bus of [this.synthBus, this.bassBus, this.drumBus, this.voiceBus]) {
       if (!bus) continue;
@@ -946,8 +937,6 @@ export class AudioEngine {
     const ctx = this.ensure();
     const bus = this.voiceBus;
     if (!bus || !this.voiceBuffer) return;
-    // Never leave a previous source running — otherwise a resume that both
-    // re-schedules and resumes the voice would double it up.
     this.stopVoiceSource();
     const src = ctx.createBufferSource();
     src.buffer = this.voiceBuffer;
