@@ -1,6 +1,6 @@
 {
   "$schema": "https://developers.reddit.com/schema/config-file.v1.json",
-  "name": "tunebox",
+  "name": "tunebox-game",
   "post": {
     "dir": "dist/client",
     "entrypoints": {
@@ -36,6 +36,6 @@
     "dev": "vite build --watch"
   },
   "dev": {
-    "subreddit": "hook_of_the_day_dev"
+    "subreddit": "tunebox_game_dev"
   }
 }
