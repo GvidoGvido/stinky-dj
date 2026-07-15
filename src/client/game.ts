@@ -1407,7 +1407,6 @@ async function init(): Promise<void> {
   }
 
   function instrumentsBlocked(): boolean {
-    if (submitted) return true;
     if (hookRecorder.active) return false;
     if (reviewBarOpen()) return true;
     if (hookPlayback) return true;
@@ -1608,6 +1607,8 @@ async function init(): Promise<void> {
       showReviewBar(false);
       renderReveal(res.prevReveal);
       renderHooks(res.hooks);
+      syncInstrumentsBlocked();
+      ensureLiveTransport();
       applauseEl.classList.remove('hidden');
       window.setTimeout(() => applauseEl.classList.add('hidden'), 900);
       toast('Hook recorded!');
